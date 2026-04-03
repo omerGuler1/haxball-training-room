@@ -1,0 +1,24 @@
+{
+  "name": "haxball-training-room-bots",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Haxball private training room host + cooperative passing bots (Puppeteer-driven).",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "host": "node src/hostEntry.js",
+    "bot": "node src/botEntry.js",
+    "lint": "node -c src/index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.6.1",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "puppeteer": "^24.15.0"
+  }
+}
+
