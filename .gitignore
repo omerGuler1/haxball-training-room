@@ -1,7 +1,4 @@
 node_modules/
-.env
-.env.*
-!.env.example
 *.log
 bot-*-*.png
 .DS_Store
