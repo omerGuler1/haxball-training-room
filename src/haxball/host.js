@@ -74,10 +74,12 @@ export async function startHost({ onReady }) {
     } else if (msg.type === "room.playerLeave") {
       const { id, name, team } = msg.payload || {};
       log.info(`Player left: id=${id} name=${name} team=${team}`);
+    } else if (msg.type === "room.startGameError") {
+      log.error(`startGame failed: ${msg.payload?.message || msg.payload}`);
     } else if (msg.type === "bot.control") {
-      const { botName, tick, moveX, moveY, kick } = msg.payload || {};
+      const { botName, tick, moveX, moveY, kick, kickPower } = msg.payload || {};
       if (!botName) return;
-      control.sendToBot(botName, { t: "control", tick, moveX, moveY, kick });
+      control.sendToBot(botName, { t: "control", tick, moveX, moveY, kick, kickPower });
     } else if (msg.type === "debug.tick") {
       if (config.debug.botDebug) log.debug(JSON.stringify(msg.payload));
     } else if (msg.type === "stadium.reload") {
@@ -144,6 +146,13 @@ export async function startHost({ onReady }) {
 
   process.on("unhandledRejection", (e) => {
     log.error(`Unhandled rejection: ${e?.message || e}`);
+  });
+
+  // Respond to orchestrator health checks
+  process.on("message", (msg) => {
+    if (msg?.type === "ping") {
+      process.send?.({ type: "pong", ts: Date.now() });
+    }
   });
 
   return {

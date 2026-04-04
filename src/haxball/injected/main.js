@@ -1,4 +1,4 @@
-// Browser-only: wires up HBInit callbacks and runs AI each tick.
+// Browser-only: wires up HBInit callbacks, manages 1v1 match lifecycle, runs adversarial AI.
 
 /* global HBInit */
 
@@ -20,38 +20,82 @@
 
   const state = window.__HB_STATE__;
   const { createRateLimiter } = window.__HB_UTIL__;
-  const { pickTrainee, getBall, getPlayersWithDisc, estimateBallVel } = window.__HB_PERCEPTION__;
-  const { chooseChaser, supportSpot, moveIntentToAxes, shouldKickToTarget } = window.__HB_DECISION__;
-  const { dist } = window.__HB_MATH__;
+  const { isBotPlayer, getBall, getPlayersWithDisc, estimateBallVel } = window.__HB_PERCEPTION__;
+  const { adversarialIntent, moveIntentToAxes } = window.__HB_DECISION__;
   const { getMem } = window.__HB_BOTMEM_API__;
-  const { incomingPassScore, pickPassTarget, kickPowerForDistance } = window.__HB_RECEIVE_PASS__;
   const { handleChatCommand, broadcast } = window.__HB_COMMANDS__;
 
   const canLogTick = createRateLimiter(2000);
+  const botTeam = cfg.training?.botTeamId === 2 ? 2 : 1;
+  const traineeTeam = cfg.training?.traineeTeamId === 1 ? 1 : 2;
+
+  // ── Helpers ──────────────────────────────────────────────
+
+  const isAllMode = state.matchMode === "all";
 
   function ensureTeams() {
-    const trainee = state.traineeId ? room.getPlayer(state.traineeId) : null;
-    if (trainee && trainee.team !== 1) room.setPlayerTeam(trainee.id, 1);
-    const bots = room.getPlayerList().filter((p) => window.__HB_PERCEPTION__.isBotPlayer(p));
-    for (const b of bots) {
-      if (b.team !== 1) room.setPlayerTeam(b.id, 1);
+    const players = room.getPlayerList().filter((p) => p.id !== 0);
+    for (const p of players) {
+      if (isBotPlayer(p)) {
+        if (p.team !== botTeam) room.setPlayerTeam(p.id, botTeam);
+      } else if (state.afkIds.includes(p.id)) {
+        if (p.team !== 0) room.setPlayerTeam(p.id, 0);
+      } else if (isAllMode) {
+        // All mode: every non-AFK human plays
+        if (p.team !== traineeTeam) room.setPlayerTeam(p.id, traineeTeam);
+      } else if (state.activeHumanId && p.id === state.activeHumanId) {
+        if (p.team !== traineeTeam) room.setPlayerTeam(p.id, traineeTeam);
+      } else {
+        // 1v1: queued humans go to spectator
+        if (p.team !== 0) room.setPlayerTeam(p.id, 0);
+      }
     }
   }
 
-  function autoStartIfReady() {
+  function countOnTeam(teamId) {
+    return room.getPlayerList().filter((p) => p.id !== 0 && p.team === teamId).length;
+  }
+
+  function botsOnBotTeamCount() {
+    return room
+      .getPlayerList()
+      .filter((p) => p.id !== 0 && isBotPlayer(p) && p.team === botTeam).length;
+  }
+
+  // ── Auto-start ──────────────────────────────────────────
+
+  function attemptAutoStartMatch() {
     if (!cfg.training?.autoStart) return;
     if (room.getScores() != null) return;
-    const trainee = state.traineeId ? room.getPlayer(state.traineeId) : null;
-    if (!trainee) return;
-    const red = room.getPlayerList().filter((p) => p.id !== 0 && p.team === 1);
-    if (red.length >= 2) {
-      // Team changes are async-ish; do a small delayed start to avoid starting while bots are still spectators.
-      setTimeout(() => {
-        const red2 = room.getPlayerList().filter((p) => p.id !== 0 && p.team === 1);
-        if (room.getScores() == null && red2.length >= 2) room.startGame();
-      }, 250);
+    if (state.matchState !== "STARTING") return;
+
+    ensureTeams();
+    if (botsOnBotTeamCount() < 1) return;
+    if (countOnTeam(botTeam) < 1 || countOnTeam(traineeTeam) < 1) return;
+
+    if (!isAllMode) {
+      if (!state.activeHumanId) return;
+      const human = room.getPlayer(state.activeHumanId);
+      if (!human || human.team !== traineeTeam) return;
+    }
+
+    try {
+      room.startGame();
+    } catch (e) {
+      window.__HB_BRIDGE__?.post("room.startGameError", { message: String(e?.message || e) });
     }
   }
+
+  function scheduleAutoStartRetries() {
+    if (!cfg.training?.autoStart) return;
+    if (room.getScores() != null) return;
+    const delays = [150, 400, 900, 1800, 3500];
+    for (const ms of delays) {
+      setTimeout(() => attemptAutoStartMatch(), ms);
+    }
+  }
+
+  // ── Stadium ─────────────────────────────────────────────
 
   function applyStadium() {
     const stadium = cfg.stadium?.jsonString;
@@ -60,9 +104,11 @@
       room.setCustomStadium(stadium);
       broadcast(room, "Stadium loaded.");
     } catch (e) {
-      broadcast(room, `Stadium load failed: ${e?.message || e}`);
+      broadcast(room, "Stadium load failed: " + (e?.message || e));
     }
   }
+
+  // ── Bot control ─────────────────────────────────────────
 
   function postBotControl(botName, intent) {
     window.__HB_BRIDGE__?.post("bot.control", {
@@ -71,6 +117,87 @@
       ...intent,
     });
   }
+
+  // ── Match lifecycle helpers ─────────────────────────────
+
+  // Epoch counter — incremented on every state transition.
+  // Pending timeouts capture the epoch and bail out if it changed.
+  let lifecycleEpoch = 0;
+
+  function transitionTo(newState) {
+    state.matchState = newState;
+    lifecycleEpoch++;
+  }
+
+  /** Schedule a callback that auto-cancels if a state transition happened since scheduling. */
+  function scheduleGuarded(fn, delayMs) {
+    const epoch = lifecycleEpoch;
+    setTimeout(() => {
+      if (lifecycleEpoch !== epoch) return; // stale — state changed since we scheduled
+      fn();
+    }, delayMs);
+  }
+
+  let startingPollTimer = null;
+
+  function stopGame() {
+    try { room.stopGame(); } catch {}
+  }
+
+  function startNewMatch() {
+    // Validate the active human still exists in the room
+    if (state.activeHumanId && !room.getPlayer(state.activeHumanId)) {
+      state.activeHumanId = null;
+    }
+    if (!state.activeHumanId) {
+      transitionTo("WAITING");
+      return;
+    }
+    transitionTo("STARTING");
+    ensureTeams();
+    scheduleAutoStartRetries();
+    // Keep polling while in STARTING (onGameTick doesn't fire without a running game)
+    clearInterval(startingPollTimer);
+    startingPollTimer = setInterval(() => {
+      if (state.matchState !== "STARTING") {
+        clearInterval(startingPollTimer);
+        startingPollTimer = null;
+        return;
+      }
+      attemptAutoStartMatch();
+    }, 500);
+  }
+
+  function promoteNextHuman() {
+    // Skip AFK players and players who already left
+    while (state.queuedHumanIds.length > 0) {
+      const nextId = state.queuedHumanIds[0];
+      if (state.afkIds.includes(nextId) || !room.getPlayer(nextId)) {
+        state.queuedHumanIds.shift();
+        continue;
+      }
+      break;
+    }
+    if (state.queuedHumanIds.length > 0) {
+      state.activeHumanId = state.queuedHumanIds.shift();
+      const p = room.getPlayer(state.activeHumanId);
+      if (p) {
+        broadcast(room, p.name + " is up next!");
+      }
+      // Notify remaining queue
+      for (let i = 0; i < state.queuedHumanIds.length; i++) {
+        const qp = room.getPlayer(state.queuedHumanIds[i]);
+        if (qp) room.sendAnnouncement("You are #" + (i + 1) + " in queue.", qp.id, 0xdddddd, "small", 1);
+      }
+      startNewMatch();
+    } else {
+      state.activeHumanId = null;
+      transitionTo("WAITING");
+      broadcast(room, "Waiting for players...");
+    }
+  }
+
+  // ── AI tick ─────────────────────────────────────────────
 
   function aiTick() {
     if (state.pausedBot) return;
@@ -82,155 +209,238 @@
     state.lastBall = ball;
 
     const players = getPlayersWithDisc(room);
-    const trainee = state.traineeId ? players.find((x) => x.p.id === state.traineeId) : null;
-    const traineeDisc = trainee?.disc ?? null;
-    const botPlayers = players.filter((x) => x.isBot && x.p.team !== 0);
-    const activeBots = botPlayers.slice(0, state.botCount);
-    if (activeBots.length === 0 || !traineeDisc) return;
+    const botPlayer = players.find((x) => x.isBot && x.p.team === botTeam);
+    if (!botPlayer?.disc || !ball) return;
 
-    const chaserId = chooseChaser(ball, traineeDisc, activeBots);
-    const otherBot = activeBots.length === 2 ? activeBots.find((b) => b.p.id !== chaserId) : null;
+    const mem = getMem(botPlayer.p.name);
+    const intent = adversarialIntent(ball, state.ballVel, botPlayer.disc, mem?.lastKickTick ?? -999999, state.tick);
 
-    for (const bot of activeBots) {
-      if (!bot.disc) continue;
-      const isChaser = chaserId != null && bot.p.id === chaserId;
-      const mem = getMem(bot.p.name);
+    if (intent.kick && mem) {
+      mem.lastKickTick = state.tick;
+    }
 
-      let targetPos = { x: 0, y: 0 };
-      let kick = false;
-      let kickPower = 0.75;
+    const axes = moveIntentToAxes(botPlayer.disc, intent.targetPos);
+    postBotControl(botPlayer.p.name, {
+      moveX: axes.ax,
+      moveY: axes.ay,
+      kick: intent.kick,
+      kickPower: intent.kickPower,
+    });
 
-      if (!ball) {
-        targetPos = { x: 0, y: 0 };
-      } else if (isChaser) {
-        // Receive heuristic: if ball is coming to bot, prioritize receiving over raw chase.
-        const passScore = incomingPassScore(ball, state.ballVel, bot.disc);
-        const receiving = passScore > 4.0 && dist(ball, bot.disc) < 220;
-
-        if (receiving && mem) {
-          mem.state = "receive";
-          if (mem.receiveStartTick == null) mem.receiveStartTick = state.tick;
-        } else if (mem) {
-          mem.state = "chase";
-          mem.receiveStartTick = null;
-        }
-
-        // Chase/intercept with small velocity lead.
-        targetPos = { x: ball.x + state.ballVel.x * 2.5, y: ball.y + state.ballVel.y * 2.5 };
-
-        // Pass behavior: if controlled, wait a short settle window sometimes before kicking.
-        const passTargetDisc = pickPassTarget({
-          trainee: traineeDisc,
-          otherBot: otherBot?.disc || null,
-          mode: state.mode,
-        });
-
-        const controlled = window.__HB_DECISION__.hasControl(ball, bot.disc, state.ballVel);
-        if (mem) {
-          if (controlled) {
-            if (mem.controlSinceTick == null) mem.controlSinceTick = state.tick;
-          } else {
-            mem.controlSinceTick = null;
-          }
-        }
-
-        const settleTicks = 8; // ~130ms at 60 tps
-        const oneTouchProb = 0.45;
-        const canOneTouch = controlled && Math.random() < oneTouchProb;
-        const canSettle = controlled && mem?.controlSinceTick != null && state.tick - mem.controlSinceTick >= settleTicks;
-
-        const kickCooldownTicks = 18;
-        const offCooldown = !mem || state.tick - mem.lastKickTick >= kickCooldownTicks;
-
-        if (offCooldown && (canOneTouch || canSettle)) {
-          kick = shouldKickToTarget(ball, bot.disc, passTargetDisc, state.ballVel);
-          const d = dist(bot.disc, passTargetDisc);
-          kickPower = kickPowerForDistance(d) * state.passSpeed;
-          kickPower = Math.max(0.2, Math.min(1.0, kickPower));
-          if (kick && mem) {
-            mem.lastKickTick = state.tick;
-            mem.lastTargetName = passTargetDisc === traineeDisc ? "trainee" : "bot";
-          }
-        }
-      } else {
-        const dist = state.supportDist;
-        if (state.mode === "wall") targetPos = supportSpot(ball, traineeDisc, 1, dist * 0.65, 170);
-        else if (state.mode === "solo") targetPos = supportSpot(ball, traineeDisc, 1, dist, 110);
-        else if (state.mode === "triangle") {
-          const side = bot.p.name === (cfg.bots?.names?.[0] || "") ? 1 : -1;
-          targetPos = supportSpot(ball, traineeDisc, side, dist, 140);
-        } else {
-          const side = Math.random() < 0.5 ? 1 : -1;
-          targetPos = supportSpot(ball, traineeDisc, side, dist, 120);
-        }
-        if (mem) mem.state = "support";
-      }
-
-      const axes = moveIntentToAxes(bot.disc, targetPos);
-      postBotControl(bot.p.name, { moveX: axes.ax, moveY: axes.ay, kick, kickPower });
-
-      if (state.debug && canLogTick()) {
-        window.__HB_BRIDGE__?.post("debug.tick", {
-          tick: state.tick,
-          mode: state.mode,
-          traineeId: state.traineeId,
-          chaserId,
-          bot: bot.p.name,
-          botState: mem?.state,
-          lastTarget: mem?.lastTargetName,
-          axes,
-          kick,
-        });
-      }
+    if (state.debug && canLogTick()) {
+      window.__HB_BRIDGE__?.post("debug.tick", {
+        tick: state.tick,
+        matchState: state.matchState,
+        activeHumanId: state.activeHumanId,
+        bot: botPlayer.p.name,
+        axes,
+        kick: intent.kick,
+      });
     }
   }
 
+  // ── Room callbacks ──────────────────────────────────────
+
   room.onRoomLink = function (link) {
     window.__HB_BRIDGE__?.post("room.link", { link });
-    broadcast(room, "Room created.");
-    broadcast(room, `Link: ${link}`);
+    broadcast(room, "Room created. Waiting for players...");
     applyStadium();
   };
 
   room.onPlayerJoin = function (player) {
     window.__HB_BRIDGE__?.post("room.playerJoin", { id: player.id, name: player.name, team: player.team });
-    if (state.traineeId == null) state.traineeId = pickTrainee(room);
-    ensureTeams();
-    autoStartIfReady();
+
+    if (isBotPlayer(player)) {
+      // Bot joined — ensure correct team
+      room.setPlayerTeam(player.id, botTeam);
+      // If waiting for bot or retries expired, (re)start match flow
+      if (state.activeHumanId && (state.matchState === "WAITING" || state.matchState === "STARTING")) {
+        startNewMatch();
+      }
+      return;
+    }
+
+    // Human joined
+    state.humanIds.push(player.id);
+
+    if (isAllMode) {
+      // All mode: put on team immediately
+      room.setPlayerTeam(player.id, traineeTeam);
+      broadcast(room, "Welcome " + player.name + "!");
+      if (state.matchState === "WAITING") {
+        state.activeHumanId = player.id;
+        startNewMatch();
+      } else if (state.matchState === "PLAYING") {
+        // Game already running — just join the team mid-game
+        ensureTeams();
+      }
+    } else if (state.matchState === "WAITING" && !state.activeHumanId) {
+      // 1v1: First human — start a match
+      state.activeHumanId = player.id;
+      broadcast(room, "Welcome " + player.name + "! Starting 1v1...");
+      startNewMatch();
+    } else {
+      // 1v1: Match in progress or another human is active — queue
+      state.queuedHumanIds.push(player.id);
+      room.setPlayerTeam(player.id, 0); // spectator
+      room.sendAnnouncement(
+        "A match is in progress. You are #" + state.queuedHumanIds.length + " in queue.",
+        player.id, 0xdddddd, "small", 1
+      );
+    }
   };
 
   room.onPlayerLeave = function (player) {
     window.__HB_BRIDGE__?.post("room.playerLeave", { id: player.id, name: player.name, team: player.team });
-    if (state.traineeId === player.id) {
-      state.traineeId = pickTrainee(room);
-      broadcast(room, "Trainee left. Bots will idle until trainee is present.");
+
+    // Remove from tracking arrays
+    state.humanIds = state.humanIds.filter((id) => id !== player.id);
+    state.queuedHumanIds = state.queuedHumanIds.filter((id) => id !== player.id);
+    state.afkIds = state.afkIds.filter((id) => id !== player.id);
+
+    if (isBotPlayer(player)) {
+      // Bot left — if match was running, pause it
+      if (state.matchState === "PLAYING" || state.matchState === "STARTING") {
+        broadcast(room, "Bot disconnected. Waiting for reconnect...");
+        stopGame();
+        transitionTo("WAITING");
+      }
+      return;
     }
+
+    // Human left
+    if (isAllMode) {
+      // All mode: only stop if no non-AFK humans remain
+      const activeHumans = state.humanIds.filter((id) => !state.afkIds.includes(id));
+      if (activeHumans.length === 0) {
+        state.activeHumanId = null;
+        if (state.matchState === "PLAYING" || state.matchState === "GOAL_SCORED" || state.matchState === "MATCH_OVER") {
+          stopGame();
+        }
+        transitionTo("WAITING");
+        broadcast(room, "Waiting for players...");
+      } else if (state.activeHumanId === player.id) {
+        // Pick another human as activeHumanId (needed for auth/commands)
+        state.activeHumanId = activeHumans[0];
+      }
+    } else if (state.activeHumanId === player.id) {
+      // 1v1: Active player left mid-match
+      state.activeHumanId = null;
+      if (state.matchState === "PLAYING" || state.matchState === "GOAL_SCORED" || state.matchState === "MATCH_OVER") {
+        stopGame();
+        transitionTo("RESETTING");
+        broadcast(room, player.name + " left the match.");
+        scheduleGuarded(() => promoteNextHuman(), 1000);
+      } else {
+        promoteNextHuman();
+      }
+    }
+    // If a queued human left, they were already removed from the array above
+  };
+
+  room.onGameStart = function () {
+    transitionTo("PLAYING");
+    state.matchScore = { red: 0, blue: 0 };
+    ensureTeams();
+
+    room.setScoreLimit(state.scoreLimit);
+    room.setTimeLimit(state.timeLimit);
+
+    broadcast(room, "Match started! First to " + state.scoreLimit + ".");
+    window.__HB_BRIDGE__?.post("room.gameStart", {});
+  };
+
+  room.onGameStop = function () {
+    window.__HB_BRIDGE__?.post("room.gameStop", {});
+
+    if (state.matchState === "MATCH_OVER" || state.matchState === "RESETTING") {
+      // Expected stop — lifecycle will handle next step
+      return;
+    }
+
+    // Unexpected stop during play
+    if (state.matchState === "PLAYING" || state.matchState === "GOAL_SCORED") {
+      transitionTo("RESETTING");
+      scheduleGuarded(() => {
+        if (state.activeHumanId && room.getPlayer(state.activeHumanId)) {
+          startNewMatch();
+        } else {
+          promoteNextHuman();
+        }
+      }, 1000);
+    }
+  };
+
+  room.onTeamGoal = function (team) {
+    transitionTo("GOAL_SCORED");
+
+    if (team === 1) state.matchScore.red++;
+    else state.matchScore.blue++;
+
+    const humanScore = traineeTeam === 1 ? state.matchScore.red : state.matchScore.blue;
+    const botScore = botTeam === 1 ? state.matchScore.red : state.matchScore.blue;
+
+    broadcast(room, "GOAL! You " + humanScore + " - " + botScore + " Bot");
+  };
+
+  room.onTeamVictory = function (scores) {
+    transitionTo("MATCH_OVER");
+
+    const humanScore = traineeTeam === 1 ? scores.red : scores.blue;
+    const botScore = botTeam === 1 ? scores.red : scores.blue;
+    const humanWon = humanScore > botScore;
+
+    if (scores.time >= scores.timeLimit && scores.timeLimit > 0 && humanScore === botScore) {
+      broadcast(room, "Time's up! Draw " + humanScore + " - " + botScore + ".");
+    } else if (humanWon) {
+      broadcast(room, "You win! " + humanScore + " - " + botScore);
+    } else {
+      broadcast(room, "Bot wins! " + botScore + " - " + humanScore);
+    }
+
+    // Auto-restart after delay
+    scheduleGuarded(() => {
+      transitionTo("RESETTING");
+      stopGame();
+
+      scheduleGuarded(() => {
+        if (state.activeHumanId && room.getPlayer(state.activeHumanId)) {
+          startNewMatch();
+        } else {
+          promoteNextHuman();
+        }
+      }, 500);
+    }, state.matchOverPauseMs);
   };
 
   room.onPositionsReset = function () {
     state.lastBall = null;
     state.ballVel = { x: 0, y: 0 };
     window.__HB_BRIDGE__?.post("room.positionsReset", {});
-  };
 
-  room.onGameStart = function () {
-    ensureTeams();
-    window.__HB_BRIDGE__?.post("room.gameStart", {});
-  };
-
-  room.onGameStop = function () {
-    window.__HB_BRIDGE__?.post("room.gameStop", {});
+    // After a goal, positions reset and game continues
+    if (state.matchState === "GOAL_SCORED") {
+      transitionTo("PLAYING");
+    }
   };
 
   room.onGameTick = function () {
     state.tick++;
-    if (state.traineeId == null) state.traineeId = pickTrainee(room);
-    ensureTeams();
-    aiTick();
+
+    if (state.matchState === "STARTING") {
+      ensureTeams();
+      if (state.tick % 30 === 0) attemptAutoStartMatch();
+    }
+
+    if (state.matchState === "PLAYING") {
+      aiTick();
+    }
   };
 
   room.onPlayerChat = function (player, message) {
     return handleChatCommand({ room, state, player, message });
   };
-})();
 
+  // Expose lifecycle helpers for commands.js
+  window.__HB_LIFECYCLE__ = { promoteNextHuman, startNewMatch };
+})();

@@ -6,8 +6,8 @@ import dotenv from "dotenv";
 
 const DEFAULTS = {
   room: {
-    name: "Private Training (Pass & Move)",
-    password: "changeme",
+    name: "1v1 Training Arena",
+    password: "",
     public: false,
     maxPlayers: 6,
     geo: { code: "TR", lat: 39.0, lon: 35.0 },
@@ -15,21 +15,27 @@ const DEFAULTS = {
     token: "",
   },
   stadium: {
-    path: "./bats_map.hbs",
-  },
-  trainee: {
-    nickname: "",
+    path: "./v1.hbs",
   },
   bots: {
-    count: 2,
-    names: ["CoopBot1", "CoopBot2"],
+    count: 1,
+    names: ["BatBot"],
     avatarPrefix: "🤖",
     launchDelayMs: 2500,
     userAgent: null,
   },
   training: {
-    defaultMode: "triangle", // solo|triangle|wall|free
     autoStart: true,
+    /** Haxball: 1 = Red, 2 = Blue */
+    botTeamId: 1,
+    traineeTeamId: 2,
+  },
+  match: {
+    mode: "1v1", // "1v1" = queue system, "all" = everyone plays on blue
+    scoreLimit: 3,
+    timeLimit: 180,
+    matchOverPauseMs: 5000,
+    autoRestart: true,
   },
   permissions: {
     adminNicknames: [],
@@ -69,7 +75,10 @@ function parseFloatSafe(s, fallback) {
 }
 
 export function loadConfig() {
-  const envPath = path.join(process.cwd(), ".env");
+  // Support: node src/index.js --env .env.bats-v1
+  const envArg = process.env.HB_ENV_FILE || process.argv.find((a) => a.startsWith("--env="))?.slice(6)
+    || (process.argv.indexOf("--env") !== -1 ? process.argv[process.argv.indexOf("--env") + 1] : null);
+  const envPath = envArg ? path.resolve(process.cwd(), envArg) : path.join(process.cwd(), ".env");
   if (fs.existsSync(envPath)) dotenv.config({ path: envPath });
   else dotenv.config();
 
@@ -87,7 +96,6 @@ export function loadConfig() {
   cfg.room.geo.lon = parseFloatSafe(process.env.ROOM_GEO_LON, cfg.room.geo.lon);
 
   cfg.stadium.path = process.env.STADIUM_PATH ?? cfg.stadium.path;
-  cfg.trainee.nickname = process.env.TRAINEE_NICKNAME ?? cfg.trainee.nickname;
 
   cfg.bots.count = Math.max(0, Math.min(2, parseIntSafe(process.env.BOT_COUNT, cfg.bots.count)));
   if (process.env.BOT_NAMES) {
@@ -96,7 +104,29 @@ export function loadConfig() {
   cfg.bots.avatarPrefix = process.env.BOT_AVATAR_PREFIX ?? cfg.bots.avatarPrefix;
   cfg.bots.launchDelayMs = parseIntSafe(process.env.BOT_LAUNCH_DELAY_MS, cfg.bots.launchDelayMs);
   cfg.bots.userAgent = process.env.BOT_USER_AGENT || cfg.bots.userAgent;
-  cfg.training.defaultMode = process.env.DEFAULT_MODE ?? cfg.training.defaultMode;
+
+  cfg.match.mode = process.env.MATCH_MODE ?? cfg.match.mode;
+  cfg.match.scoreLimit = parseIntSafe(process.env.MATCH_SCORE_LIMIT, cfg.match.scoreLimit);
+  cfg.match.timeLimit = parseIntSafe(process.env.MATCH_TIME_LIMIT, cfg.match.timeLimit);
+  cfg.match.matchOverPauseMs = parseIntSafe(process.env.MATCH_OVER_PAUSE_MS, cfg.match.matchOverPauseMs);
+
+  const parseTeamId = (val, fallback) => {
+    const v = String(val ?? "").trim().toLowerCase();
+    if (v === "red" || v === "1") return 1;
+    if (v === "blue" || v === "2") return 2;
+    const n = parseIntSafe(val, fallback);
+    return n === 1 || n === 2 ? n : fallback;
+  };
+  cfg.training.botTeamId = parseTeamId(process.env.BOT_TEAM, cfg.training.botTeamId);
+  cfg.training.traineeTeamId = parseTeamId(process.env.TRAINEE_TEAM, cfg.training.traineeTeamId);
+  if (process.env.TRAINING_TEAM && !process.env.TRAINEE_TEAM) {
+    cfg.training.traineeTeamId = parseTeamId(process.env.TRAINING_TEAM, cfg.training.traineeTeamId);
+    cfg.training.botTeamId = cfg.training.traineeTeamId === 1 ? 2 : 1;
+  }
+  if (cfg.training.botTeamId === cfg.training.traineeTeamId) {
+    cfg.training.botTeamId = 1;
+    cfg.training.traineeTeamId = 2;
+  }
 
   if (process.env.ADMIN_NICKNAMES) {
     cfg.permissions.adminNicknames = process.env.ADMIN_NICKNAMES.split(",").map((s) => s.trim()).filter(Boolean);

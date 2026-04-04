@@ -78,13 +78,12 @@ export async function spawnOrchestrator() {
   log.info(`Room link: ${roomLink}`);
   log.info(`Bot control WS: ${controlWsUrl}`);
 
-  const botsToLaunch = Math.max(0, Math.min(2, config.bots.count));
-  for (let i = 0; i < botsToLaunch; i++) {
-    if (i > 0) {
-      const delay = Math.max(0, Number(config.bots.launchDelayMs) || 0);
-      if (delay) await new Promise((r) => setTimeout(r, delay));
-    }
-    const botName = config.bots.names[i] ?? `CoopBot${i + 1}`;
+  // ── Bot launcher with auto-restart ──────────────────────
+
+  const botBackoff = new Map(); // botIndex -> current backoff ms
+
+  function launchBot(index) {
+    const botName = config.bots.names[index] ?? `CoopBot${index + 1}`;
     const bot = fork(path.join(__dirname, "botEntry.js"), [], {
       env: {
         ...process.env,
@@ -97,14 +96,48 @@ export async function spawnOrchestrator() {
     });
 
     bot.on("message", (m) => {
-      if (m?.type === "bot.ready") log.info(`Bot ready: ${m.name}`);
+      if (m?.type === "bot.ready") {
+        log.info(`Bot ready: ${m.name}`);
+        botBackoff.set(index, 5000); // Reset backoff on success
+      }
+    });
+
+    bot.on("exit", (code, signal) => {
+      const currentBackoff = botBackoff.get(index) || 5000;
+      log.warn(`Bot ${botName} exited (code=${code}, signal=${signal}). Restarting in ${currentBackoff / 1000}s...`);
+      // Exponential backoff: 5s, 10s, 20s, 40s, max 60s
+      const nextBackoff = Math.min(currentBackoff * 2, 60000);
+      botBackoff.set(index, nextBackoff);
+      setTimeout(() => launchBot(index), currentBackoff);
     });
   }
 
-  process.on("SIGINT", () => {
-    log.info("SIGINT received, shutting down...");
-    host.kill("SIGINT");
-    process.exit(0);
-  });
-}
+  const botsToLaunch = Math.max(0, Math.min(2, config.bots.count));
+  for (let i = 0; i < botsToLaunch; i++) {
+    if (i > 0) {
+      const delay = Math.max(0, Number(config.bots.launchDelayMs) || 0);
+      if (delay) await new Promise((r) => setTimeout(r, delay));
+    }
+    launchBot(i);
+  }
 
+  // ── Host crash recovery ────��────────────────────────────
+
+  host.on("exit", (code, signal) => {
+    log.error(`Host process exited (code=${code}, signal=${signal}). Entire stack will restart in 10s...`);
+    setTimeout(() => {
+      process.exit(1); // Let PM2 or supervisor restart us
+    }, 10000);
+  });
+
+  // ── Graceful shutdown ───────────────────────────────────
+
+  function shutdown(sig) {
+    log.info(`${sig} received, shutting down...`);
+    host.kill("SIGINT");
+    setTimeout(() => process.exit(0), 3000);
+  }
+
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+}

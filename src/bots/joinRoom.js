@@ -16,20 +16,22 @@ export async function joinRoomClient({ page, roomLink, password, nickname }) {
   await page.reload({ waitUntil: "domcontentloaded" });
 
   // Password entry is UI-based; selectors can change.
-  // We implement a resilient flow: look for a password input and submit if present.
-  const tryPassword = async () => {
-    const input = await page.$('input[type="password"]');
-    if (!input) return false;
-    await input.click({ clickCount: 3 });
-    await input.type(password ?? "");
-    await page.keyboard.press("Enter");
-    return true;
-  };
+  // Only try if a password was provided.
+  if (password) {
+    const tryPassword = async () => {
+      const input = await page.$('input[type="password"]');
+      if (!input) return false;
+      await input.click({ clickCount: 3 });
+      await input.type(password);
+      await page.keyboard.press("Enter");
+      return true;
+    };
 
-  for (let i = 0; i < 10; i++) {
-    const ok = await tryPassword();
-    if (ok) break;
-    await sleep(500);
+    for (let i = 0; i < 10; i++) {
+      const ok = await tryPassword();
+      if (ok) break;
+      await sleep(500);
+    }
   }
 
   // Try to close dialogs / confirm buttons if any appear.

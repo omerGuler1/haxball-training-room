@@ -38,9 +38,6 @@ export async function startBot({ roomLink, botName, controlWsUrl, password }) {
       log.info(`Bot dialog (${botName}): type=${type} msg=${msg.slice(0, 120)}`);
 
       if (type === "prompt") {
-        // Haxball often uses prompt() for the room password.
-        // Some clients don't include a helpful message, so if we have a password
-        // and haven't used it yet, feed it once.
         if (!promptUsed && password) {
           promptUsed = true;
           await d.accept(password ?? "");
@@ -56,7 +53,6 @@ export async function startBot({ roomLink, botName, controlWsUrl, password }) {
 
   await joinRoomClient({ page, roomLink, password, nickname: botName });
 
-  // Debug: after join attempt, capture where we are (expensive; only when debug is on).
   const debugProbe = async (tag) => {
     if (!debug) return;
     try {
@@ -71,9 +67,8 @@ export async function startBot({ roomLink, botName, controlWsUrl, password }) {
     }
   };
 
-  // Give the room UI some time to settle, then probe.
   setTimeout(() => void debugProbe("after-join-5s"), 5000);
-  // If Cloudflare rate-limited us, wait and retry a couple times.
+
   const retryIfCloudflare = async () => {
     try {
       const title = await page.title();
@@ -98,42 +93,65 @@ export async function startBot({ roomLink, botName, controlWsUrl, password }) {
   const input = createInputController({ page, logger: log });
 
   let lastPacketAt = Date.now();
+  let ws = null;
+  let reconnectAttempts = 0;
+  const MAX_RECONNECT_ATTEMPTS = 5;
 
-  const ws = new WebSocket(controlWsUrl);
-  ws.on("open", () => {
-    ws.send(JSON.stringify(makeHello({ name: botName })));
-    log.info(`Bot connected to control: ${botName}`);
-  });
+  function connectWs() {
+    ws = new WebSocket(controlWsUrl);
 
-  ws.on("message", async (data) => {
-    lastPacketAt = Date.now();
-    let msg;
-    try {
-      msg = JSON.parse(String(data));
-    } catch {
-      return;
-    }
+    ws.on("open", () => {
+      ws.send(JSON.stringify(makeHello({ name: botName })));
+      log.info(`Bot connected to control: ${botName}`);
+      reconnectAttempts = 0; // Reset on successful connection
+      lastPacketAt = Date.now();
+    });
 
-    if (msg?.t === ControlMsgType.CONTROL || msg?.t === "control") {
-      const { moveX, moveY, kick, kickPower } = msg;
-      await input.applyAxes(moveX, moveY, kick);
-      if (kick) await input.kickPulse(kickPower);
-      return;
-    }
-    if (msg?.t === ControlMsgType.RELEASE) {
+    ws.on("message", async (data) => {
+      lastPacketAt = Date.now();
+      let msg;
+      try {
+        msg = JSON.parse(String(data));
+      } catch {
+        return;
+      }
+
+      if (msg?.t === ControlMsgType.CONTROL || msg?.t === "control") {
+        const { moveX, moveY, kick, kickPower } = msg;
+        await input.applyAxes(moveX, moveY, kick);
+        if (kick) await input.kickPulse(kickPower);
+        return;
+      }
+      if (msg?.t === ControlMsgType.RELEASE) {
+        await input.releaseAll();
+        return;
+      }
+    });
+
+    ws.on("close", async () => {
+      log.warn(`Control WS closed (${botName}).`);
       await input.releaseAll();
-      return;
+      scheduleReconnect();
+    });
+
+    ws.on("error", (e) => {
+      log.error(`Control WS error (${botName}): ${e?.message || e}`);
+    });
+  }
+
+  function scheduleReconnect() {
+    reconnectAttempts++;
+    if (reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
+      log.error(`Max reconnect attempts reached (${botName}). Exiting for orchestrator restart.`);
+      process.exit(1);
     }
-  });
+    // Exponential backoff: 3s, 6s, 12s, 24s, 48s
+    const delay = 3000 * Math.pow(2, reconnectAttempts - 1);
+    log.warn(`Reconnecting in ${delay / 1000}s (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+    setTimeout(() => connectWs(), delay);
+  }
 
-  ws.on("close", async () => {
-    log.warn("Control WS closed; releasing keys.");
-    await input.releaseAll();
-  });
-
-  ws.on("error", (e) => {
-    log.error(`Control WS error: ${e?.message || e}`);
-  });
+  connectWs();
 
   // Failsafe: if packets stop, release keys.
   const failsafe = setInterval(async () => {
@@ -146,7 +164,7 @@ export async function startBot({ roomLink, botName, controlWsUrl, password }) {
     shutdown: async () => {
       clearInterval(failsafe);
       try {
-        ws.close();
+        ws?.close();
       } catch {}
       await input.releaseAll().catch(() => {});
       await debugProbe("shutdown");
@@ -159,4 +177,3 @@ export async function startBot({ roomLink, botName, controlWsUrl, password }) {
     },
   };
 }
-

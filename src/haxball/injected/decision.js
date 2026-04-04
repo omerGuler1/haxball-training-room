@@ -1,34 +1,31 @@
-// Browser-only: decision layer (roles, support spots, kick heuristics).
+// Browser-only: adversarial 1v1 AI — always chase the ball, kick when close.
 
 (function initDecision() {
-  const { len, norm, signAxis, dist } = window.__HB_MATH__;
+  const { norm, dist, signAxis } = window.__HB_MATH__;
 
-  function chooseChaser(ball, traineeDisc, bots) {
-    if (!ball) return null;
-    const scored = bots
-      .filter((b) => b.disc)
-      .map((b) => ({ id: b.p.id, d: len(b.disc.x - ball.x, b.disc.y - ball.y) }))
-      .sort((a, b) => a.d - b.d);
-    if (scored.length === 0) return null;
+  const KICK_COOLDOWN_TICKS = 18; // ~300ms at 60fps
 
-    if (traineeDisc) {
-      const traineeD = len(traineeDisc.x - ball.x, traineeDisc.y - ball.y);
-      if (traineeD + 35 < scored[0].d) return null; // trainee claims if clearly closer
+  /**
+   * Core AI: chase the ball, kick when in control.
+   * Returns { targetPos, kick, kickPower }.
+   */
+  function adversarialIntent(ball, ballVel, botDisc, lastKickTick, currentTick) {
+    if (!ball || !botDisc) {
+      return { targetPos: { x: 0, y: 0 }, kick: false, kickPower: 0 };
     }
-    return scored[0].id;
-  }
 
-  function supportSpot(ball, traineeDisc, side, distForward, lateral) {
-    const center = { x: 0, y: 0 };
-    if (!traineeDisc) return center;
-    const toBall = ball ? { x: ball.x - traineeDisc.x, y: ball.y - traineeDisc.y } : { x: 1, y: 0 };
-    const dir = norm(toBall.x, toBall.y);
-    const px = -dir.y * side;
-    const py = dir.x * side;
-    return {
-      x: traineeDisc.x + dir.x * distForward + px * lateral,
-      y: traineeDisc.y + dir.y * distForward + py * lateral,
+    // Always chase: intercept with velocity lead
+    const targetPos = {
+      x: ball.x + ballVel.x * 2.5,
+      y: ball.y + ballVel.y * 2.5,
     };
+
+    // Kick when close enough and off cooldown
+    const controlled = hasControl(ball, botDisc, ballVel);
+    const offCooldown = currentTick - lastKickTick >= KICK_COOLDOWN_TICKS;
+    const kick = controlled && offCooldown;
+
+    return { targetPos, kick, kickPower: 1.0 };
   }
 
   function moveIntentToAxes(from, to) {
@@ -39,28 +36,14 @@
     return { ax: signAxis(v.x, dead), ay: signAxis(v.y, dead) };
   }
 
-  function hasControl(ball, selfDisc, ballVel) {
+  function hasControl(ball, selfDisc) {
     if (!ball || !selfDisc) return false;
-    const dBall = dist(selfDisc, ball);
-    const close = dBall < 22;
-    const speed = len(ballVel.x, ballVel.y);
-    return close && speed < 7.5;
-  }
-
-  function shouldKickToTarget(ball, selfDisc, targetDisc, ballVel) {
-    if (!ball || !selfDisc || !targetDisc) return false;
-    if (!hasControl(ball, selfDisc, ballVel)) return false;
-    const d = dist(selfDisc, targetDisc);
-    if (d < 80) return false;
-    return true;
+    return dist(selfDisc, ball) < 28;
   }
 
   window.__HB_DECISION__ = {
-    chooseChaser,
-    supportSpot,
+    adversarialIntent,
     moveIntentToAxes,
     hasControl,
-    shouldKickToTarget,
   };
 })();
-
