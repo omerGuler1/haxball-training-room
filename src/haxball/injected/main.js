@@ -66,8 +66,12 @@
 
   function attemptAutoStartMatch() {
     if (!cfg.training?.autoStart) return;
-    if (room.getScores() != null) return;
     if (state.matchState !== "STARTING") return;
+    // If a previous game's scores linger, force-stop first
+    if (room.getScores() != null) {
+      try { room.stopGame(); } catch {}
+      return; // retry on next poll cycle after stopGame clears scores
+    }
 
     ensureTeams();
     if (botsOnBotTeamCount() < 1) return;
@@ -88,7 +92,6 @@
 
   function scheduleAutoStartRetries() {
     if (!cfg.training?.autoStart) return;
-    if (room.getScores() != null) return;
     const delays = [150, 400, 900, 1800, 3500];
     for (const ms of delays) {
       setTimeout(() => attemptAutoStartMatch(), ms);
@@ -124,9 +127,23 @@
   // Pending timeouts capture the epoch and bail out if it changed.
   let lifecycleEpoch = 0;
 
+  function emitRoomStatus() {
+    const activeP = state.activeHumanId ? room.getPlayer(state.activeHumanId) : null;
+    window.__HB_BRIDGE__?.post("room.statusUpdate", {
+      matchState: state.matchState,
+      matchMode: state.matchMode,
+      playerCount: state.humanIds.length,
+      scoreRed: state.matchScore?.red ?? 0,
+      scoreBlue: state.matchScore?.blue ?? 0,
+      activePlayer: activeP?.name || null,
+      queueSize: state.queuedHumanIds.length,
+    });
+  }
+
   function transitionTo(newState) {
     state.matchState = newState;
     lifecycleEpoch++;
+    emitRoomStatus();
   }
 
   /** Schedule a callback that auto-cancels if a state transition happened since scheduling. */
@@ -288,6 +305,7 @@
         player.id, 0xdddddd, "small", 1
       );
     }
+    emitRoomStatus();
   };
 
   room.onPlayerLeave = function (player) {
@@ -336,6 +354,7 @@
       }
     }
     // If a queued human left, they were already removed from the array above
+    emitRoomStatus();
   };
 
   room.onGameStart = function () {
@@ -409,7 +428,7 @@
         } else {
           promoteNextHuman();
         }
-      }, 500);
+      }, 1000);
     }, state.matchOverPauseMs);
   };
 

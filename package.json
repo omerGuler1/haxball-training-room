@@ -9,11 +9,14 @@
   },
   "scripts": {
     "start": "node src/index.js",
+    "discord": "node src/discord/index.js",
     "host": "node src/hostEntry.js",
     "bot": "node src/botEntry.js",
     "lint": "node -c src/index.js"
   },
   "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "discord.js": "^14.18.0",
     "dotenv": "^16.6.1",
     "ws": "^8.18.3"
   },

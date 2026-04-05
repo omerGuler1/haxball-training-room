@@ -1,4 +1,6 @@
 node_modules/
+data/
+*.db
 *.log
 bot-*-*.png
 .DS_Store

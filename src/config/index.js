@@ -40,6 +40,14 @@ const DEFAULTS = {
   permissions: {
     adminNicknames: [],
   },
+  db: {
+    path: "./data/haxball.db",
+  },
+  discord: {
+    token: "",
+    guildId: "",
+    channelId: "",
+  },
   debug: {
     botDebug: false,
     logLevel: "info",
@@ -104,6 +112,11 @@ export function loadConfig() {
   cfg.bots.avatarPrefix = process.env.BOT_AVATAR_PREFIX ?? cfg.bots.avatarPrefix;
   cfg.bots.launchDelayMs = parseIntSafe(process.env.BOT_LAUNCH_DELAY_MS, cfg.bots.launchDelayMs);
   cfg.bots.userAgent = process.env.BOT_USER_AGENT || cfg.bots.userAgent;
+
+  cfg.db.path = process.env.DB_PATH ?? cfg.db.path;
+  cfg.discord.token = process.env.DISCORD_TOKEN ?? cfg.discord.token;
+  cfg.discord.guildId = process.env.DISCORD_GUILD_ID ?? cfg.discord.guildId;
+  cfg.discord.channelId = process.env.DISCORD_CHANNEL_ID ?? cfg.discord.channelId;
 
   cfg.match.mode = process.env.MATCH_MODE ?? cfg.match.mode;
   cfg.match.scoreLimit = parseIntSafe(process.env.MATCH_SCORE_LIMIT, cfg.match.scoreLimit);

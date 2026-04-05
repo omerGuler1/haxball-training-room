@@ -66,8 +66,54 @@
       reply(
         room,
         player.id,
-        "Commands: !help !afk !start !stop !reset !pausebot !resumebot !botdebug <on|off> !reloadstadium !status"
+        "Commands: !help !kayit <sifre> !giris <sifre> !bagla !profil !afk !start !stop !reset !status"
       );
+      return false;
+    }
+
+    // ── Auth commands (no auth needed, available to everyone) ──
+
+    if (cmd === "kayit" || cmd === "kayıt") {
+      const password = rest.join(" ").trim();
+      if (!password || password.length < 4) {
+        reply(room, player.id, "Kullanim: !kayit <sifre> (en az 4 karakter)");
+        return false;
+      }
+      window.__HB_BRIDGE__?.post("auth.register", {
+        playerId: player.id,
+        playerName: player.name,
+        password: password,
+      });
+      return false;
+    }
+
+    if (cmd === "giris" || cmd === "giriş" || cmd === "giris") {
+      const password = rest.join(" ").trim();
+      if (!password) {
+        reply(room, player.id, "Kullanim: !giris <sifre>");
+        return false;
+      }
+      window.__HB_BRIDGE__?.post("auth.login", {
+        playerId: player.id,
+        playerName: player.name,
+        password: password,
+      });
+      return false;
+    }
+
+    if (cmd === "bagla" || cmd === "bağla") {
+      window.__HB_BRIDGE__?.post("auth.createLinkCode", {
+        playerId: player.id,
+        playerName: player.name,
+      });
+      return false;
+    }
+
+    if (cmd === "profil") {
+      window.__HB_BRIDGE__?.post("auth.profile", {
+        playerId: player.id,
+        playerName: player.name,
+      });
       return false;
     }
 
