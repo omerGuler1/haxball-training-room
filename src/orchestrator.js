@@ -112,7 +112,7 @@ export async function spawnOrchestrator() {
     });
   }
 
-  const botsToLaunch = Math.max(0, Math.min(2, config.bots.count));
+  const botsToLaunch = Math.max(0, Math.min(6, config.bots.count));
   for (let i = 0; i < botsToLaunch; i++) {
     if (i > 0) {
       const delay = Math.max(0, Number(config.bots.launchDelayMs) || 0);

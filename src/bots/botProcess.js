@@ -69,26 +69,52 @@ export async function startBot({ roomLink, botName, controlWsUrl, password }) {
 
   setTimeout(() => void debugProbe("after-join-5s"), 5000);
 
-  const retryIfCloudflare = async () => {
+  let botInGame = false;
+
+  const isInGame = async () => {
     try {
-      const title = await page.title();
-      if (!title.toLowerCase().includes("cloudflare") && !title.toLowerCase().includes("access denied")) return;
-      log.warn(`Bot blocked by Cloudflare (${botName}). Backing off and retrying...`);
-      for (const backoffMs of [15_000, 45_000, 120_000]) {
-        await new Promise((r) => setTimeout(r, backoffMs));
-        await page.goto(roomLink, { waitUntil: "domcontentloaded" });
-        await debugProbe(`retry-${backoffMs}ms`);
-        const t2 = (await page.title()).toLowerCase();
-        if (!t2.includes("cloudflare") && !t2.includes("access denied")) {
-          log.info(`Bot unblocked (${botName}) after retry.`);
-          return;
-        }
+      // Check main page and all iframes for canvas
+      const main = await page.evaluate(() => {
+        const c = document.querySelector("canvas");
+        return c && c.width > 100;
+      });
+      if (main) return true;
+      for (const f of page.frames()) {
+        if (f === page.mainFrame()) continue;
+        try {
+          const has = await f.evaluate(() => {
+            const c = document.querySelector("canvas");
+            return c && c.width > 100;
+          });
+          if (has) return true;
+        } catch {}
       }
-    } catch (e) {
-      log.warn(`Cloudflare retry failed (${botName}): ${e?.message || e}`);
-    }
+      return false;
+    } catch { return false; }
   };
-  setTimeout(() => void retryIfCloudflare(), 7000);
+
+  // Retry loop: if bot isn't in game after joinRoom, keep retrying
+  const retryUntilInGame = async () => {
+    await new Promise((r) => setTimeout(r, 5000));
+    for (let attempt = 0; attempt < 10; attempt++) {
+      if (botInGame || await isInGame()) { botInGame = true; return; }
+      log.warn(`Bot not in game (${botName}). Retrying in 10s... (attempt ${attempt + 1}/10)`);
+      await new Promise((r) => setTimeout(r, 10000));
+      try {
+        await page.goto(roomLink, { waitUntil: "domcontentloaded" });
+        await new Promise((r) => setTimeout(r, 3000));
+        // Re-run the join flow
+        await (await import("./joinRoom.js")).joinRoomClient({ page, roomLink, password, nickname: botName });
+      } catch (e) {
+        log.warn(`Retry join failed (${botName}): ${e?.message || e}`);
+      }
+      await new Promise((r) => setTimeout(r, 3000));
+      if (await isInGame()) { botInGame = true; log.info(`Bot joined after retry (${botName}).`); return; }
+    }
+    log.error(`Bot failed to join after 10 retries (${botName}). Exiting for orchestrator restart.`);
+    process.exit(1);
+  };
+  void retryUntilInGame();
 
   const input = createInputController({ page, logger: log });
 
@@ -117,6 +143,7 @@ export async function startBot({ roomLink, botName, controlWsUrl, password }) {
       }
 
       if (msg?.t === ControlMsgType.CONTROL || msg?.t === "control") {
+        botInGame = true;
         const { moveX, moveY, kick, kickPower } = msg;
         await input.applyAxes(moveX, moveY, kick);
         if (kick) await input.kickPulse(kickPower);

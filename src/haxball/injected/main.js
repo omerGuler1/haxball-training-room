@@ -20,7 +20,7 @@
 
   const state = window.__HB_STATE__;
   const { createRateLimiter } = window.__HB_UTIL__;
-  const { isBotPlayer, getBall, getPlayersWithDisc, estimateBallVel } = window.__HB_PERCEPTION__;
+  const { isBotPlayer, getBall, getDisc, getPlayersWithDisc, estimateBallVel } = window.__HB_PERCEPTION__;
   const { adversarialIntent, moveIntentToAxes } = window.__HB_DECISION__;
   const { getMem } = window.__HB_BOTMEM_API__;
   const { handleChatCommand, broadcast } = window.__HB_COMMANDS__;
@@ -32,6 +32,7 @@
   // ── Helpers ──────────────────────────────────────────────
 
   const isAllMode = state.matchMode === "all";
+  const isSquaresMode = state.matchMode === "squares";
 
   function ensureTeams() {
     const players = room.getPlayerList().filter((p) => p.id !== 0);
@@ -40,8 +41,8 @@
         if (p.team !== botTeam) room.setPlayerTeam(p.id, botTeam);
       } else if (state.afkIds.includes(p.id)) {
         if (p.team !== 0) room.setPlayerTeam(p.id, 0);
-      } else if (isAllMode) {
-        // All mode: every non-AFK human plays
+      } else if (isAllMode || isSquaresMode) {
+        // All/squares mode: every non-AFK human plays
         if (p.team !== traineeTeam) room.setPlayerTeam(p.id, traineeTeam);
       } else if (state.activeHumanId && p.id === state.activeHumanId) {
         if (p.team !== traineeTeam) room.setPlayerTeam(p.id, traineeTeam);
@@ -49,6 +50,111 @@
         // 1v1: queued humans go to spectator
         if (p.team !== 0) room.setPlayerTeam(p.id, 0);
       }
+    }
+  }
+
+  // ── Squares mode helpers ────────────────────────────────
+
+  function getCourtByBotName(botName) {
+    if (!state.courts) return null;
+    const names = cfg.bots?.names || [];
+    const idx = names.indexOf(botName);
+    return idx >= 0 && idx < state.courts.length ? state.courts[idx] : null;
+  }
+
+  function getCourtByHumanId(humanId) {
+    if (!state.courts) return null;
+    return state.courts.find((c) => c.humanId === humanId) || null;
+  }
+
+  function assignHumanToCourt(humanId) {
+    if (!state.courts || !state.courtJoinOrder) return null;
+    for (const ci of state.courtJoinOrder) {
+      if (!state.courts[ci].humanId) {
+        state.courts[ci].humanId = humanId;
+        return state.courts[ci];
+      }
+    }
+    return null; // all courts full
+  }
+
+  function unassignHuman(humanId) {
+    if (!state.courts) return;
+    const court = state.courts.find((c) => c.humanId === humanId);
+    if (court) court.humanId = null;
+  }
+
+  function unassignBot(botId) {
+    if (!state.courts) return;
+    const court = state.courts.find((c) => c.botId === botId);
+    if (court) court.botId = null;
+  }
+
+  function teleportToCourts() {
+    if (!state.courts) return;
+    for (const court of state.courts) {
+      if (court.botId) {
+        try { room.setPlayerDiscProperties(court.botId, { x: court.botSpawnX, y: 0 }); } catch {}
+      }
+      if (court.humanId) {
+        try { room.setPlayerDiscProperties(court.humanId, { x: court.humanSpawnX, y: 0 }); } catch {}
+      }
+    }
+  }
+
+  function squaresHasHumans() {
+    if (!state.courts) return false;
+    return state.courts.some((c) => c.humanId != null);
+  }
+
+  function squaresHasBots() {
+    if (!state.courts) return false;
+    return state.courts.some((c) => c.botId != null);
+  }
+
+  function squaresStartGameIfReady() {
+    if (room.getScores() != null) return; // already running
+    if (!squaresHasHumans() || !squaresHasBots()) return;
+    ensureTeams();
+    setTimeout(() => {
+      try { room.startGame(); } catch {}
+    }, 300);
+  }
+
+  function squaresAiTick() {
+    if (state.pausedBot || !state.courts) return;
+    const scores = room.getScores();
+    if (!scores) return;
+    const players = getPlayersWithDisc(room);
+
+    for (const court of state.courts) {
+      if (!court.botId || !court.humanId) {
+        // No human in this court — send idle (0,0) to bot so it stops
+        if (court.botId) {
+          const bp = players.find((x) => x.p.id === court.botId);
+          if (bp) postBotControl(bp.p.name, { moveX: 0, moveY: 0, kick: false, kickPower: 0 });
+        }
+        continue;
+      }
+
+      const ball = getDisc(room, court.discIndex);
+      court.ballVel = estimateBallVel(court.lastBall, ball);
+      court.lastBall = ball;
+
+      const botPlayer = players.find((x) => x.p.id === court.botId);
+      if (!botPlayer?.disc || !ball) continue;
+
+      const mem = getMem(botPlayer.p.name);
+      const intent = adversarialIntent(ball, court.ballVel, botPlayer.disc, mem?.lastKickTick ?? -999999, state.tick);
+      if (intent.kick && mem) mem.lastKickTick = state.tick;
+
+      const axes = moveIntentToAxes(botPlayer.disc, intent.targetPos);
+      postBotControl(botPlayer.p.name, {
+        moveX: axes.ax,
+        moveY: axes.ay,
+        kick: intent.kick,
+        kickPower: intent.kickPower,
+      });
     }
   }
 
@@ -267,39 +373,83 @@
   room.onPlayerJoin = function (player) {
     window.__HB_BRIDGE__?.post("room.playerJoin", { id: player.id, name: player.name, team: player.team });
 
+    // ── Bot avatar ─────────────────────────────────────
     if (isBotPlayer(player)) {
-      // Bot joined — ensure correct team
+      room.setPlayerAvatar(player.id, "🦇");
+    }
+
+    // ── Squares mode ──────────────────────────────────
+    if (isSquaresMode) {
+      if (isBotPlayer(player)) {
+        room.setPlayerTeam(player.id, botTeam);
+        const court = getCourtByBotName(player.name);
+        if (court) {
+          court.botId = player.id;
+          if (room.getScores() != null) {
+            setTimeout(() => {
+              try { room.setPlayerDiscProperties(player.id, { x: court.botSpawnX, y: 0 }); } catch {}
+            }, 200);
+          }
+        }
+        squaresStartGameIfReady();
+        return;
+      }
+      // Human joined
+      state.humanIds.push(player.id);
+      room.sendAnnouncement("Antrenman odasina hosgeldiniz!", player.id, 0x66ff66, "bold", 1);
+      setTimeout(() => {
+        room.sendAnnouncement("!afk yazarak spec gecebilirsiniz", player.id, 0xdddddd, "small", 1);
+      }, 1500);
+      const court = assignHumanToCourt(player.id);
+      if (court) {
+        room.setPlayerTeam(player.id, traineeTeam);
+        broadcast(room, player.name + " → " + court.name + " kare!");
+        if (room.getScores() != null) {
+          setTimeout(() => {
+            try { room.setPlayerDiscProperties(player.id, { x: court.humanSpawnX, y: 0 }); } catch {}
+          }, 200);
+        } else {
+          squaresStartGameIfReady();
+        }
+      } else {
+        state.queuedHumanIds.push(player.id);
+        room.setPlayerTeam(player.id, 0);
+        room.sendAnnouncement("Tum kareler dolu. Sirada #" + state.queuedHumanIds.length + " bekle.", player.id, 0xdddddd, "small", 1);
+      }
+      emitRoomStatus();
+      return;
+    }
+
+    // ── 1v1 / All mode ────────────────────────────────
+    if (isBotPlayer(player)) {
       room.setPlayerTeam(player.id, botTeam);
-      // If waiting for bot or retries expired, (re)start match flow
       if (state.activeHumanId && (state.matchState === "WAITING" || state.matchState === "STARTING")) {
         startNewMatch();
       }
       return;
     }
 
-    // Human joined
     state.humanIds.push(player.id);
+    room.sendAnnouncement("Antrenman odasina hosgeldiniz!", player.id, 0x66ff66, "bold", 1);
+    setTimeout(() => {
+      room.sendAnnouncement("!afk yazarak spec gecebilirsiniz", player.id, 0xdddddd, "small", 1);
+    }, 1500);
 
     if (isAllMode) {
-      // All mode: put on team immediately
       room.setPlayerTeam(player.id, traineeTeam);
-      broadcast(room, "Welcome " + player.name + "!");
       if (state.matchState === "WAITING") {
         state.activeHumanId = player.id;
         startNewMatch();
       } else if (state.matchState === "PLAYING") {
-        // Game already running — just join the team mid-game
         ensureTeams();
       }
     } else if (state.matchState === "WAITING" && !state.activeHumanId) {
-      // 1v1: First human — start a match
       state.activeHumanId = player.id;
       broadcast(room, "Welcome " + player.name + "! Starting 1v1...");
       startNewMatch();
     } else {
-      // 1v1: Match in progress or another human is active — queue
       state.queuedHumanIds.push(player.id);
-      room.setPlayerTeam(player.id, 0); // spectator
+      room.setPlayerTeam(player.id, 0);
       room.sendAnnouncement(
         "A match is in progress. You are #" + state.queuedHumanIds.length + " in queue.",
         player.id, 0xdddddd, "small", 1
@@ -316,8 +466,45 @@
     state.queuedHumanIds = state.queuedHumanIds.filter((id) => id !== player.id);
     state.afkIds = state.afkIds.filter((id) => id !== player.id);
 
+    // ── Squares mode ──────────────────────────────────
+    if (isSquaresMode) {
+      if (isBotPlayer(player)) {
+        unassignBot(player.id);
+        return;
+      }
+      // Human left — free their court
+      const court = getCourtByHumanId(player.id);
+      if (court) {
+        court.humanId = null;
+        broadcast(room, player.name + " ayrildi (" + court.name + " kare bos).");
+        // Promote queued player into freed court
+        while (state.queuedHumanIds.length > 0) {
+          const nextId = state.queuedHumanIds.shift();
+          const np = room.getPlayer(nextId);
+          if (!np || state.afkIds.includes(nextId)) continue;
+          court.humanId = nextId;
+          room.setPlayerTeam(nextId, traineeTeam);
+          broadcast(room, np.name + " → " + court.name + " kare!");
+          if (room.getScores() != null) {
+            setTimeout(() => {
+              try { room.setPlayerDiscProperties(nextId, { x: court.humanSpawnX, y: 0 }); } catch {}
+            }, 200);
+          }
+          break;
+        }
+      }
+      // Stop game if no humans left
+      if (!squaresHasHumans() && room.getScores() != null) {
+        stopGame();
+        transitionTo("WAITING");
+        broadcast(room, "Oyuncu kalmadi. Bekleniyor...");
+      }
+      emitRoomStatus();
+      return;
+    }
+
+    // ── 1v1 / All mode ────────────────────────────────
     if (isBotPlayer(player)) {
-      // Bot left — if match was running, pause it
       if (state.matchState === "PLAYING" || state.matchState === "STARTING") {
         broadcast(room, "Bot disconnected. Waiting for reconnect...");
         stopGame();
@@ -326,9 +513,7 @@
       return;
     }
 
-    // Human left
     if (isAllMode) {
-      // All mode: only stop if no non-AFK humans remain
       const activeHumans = state.humanIds.filter((id) => !state.afkIds.includes(id));
       if (activeHumans.length === 0) {
         state.activeHumanId = null;
@@ -338,11 +523,9 @@
         transitionTo("WAITING");
         broadcast(room, "Waiting for players...");
       } else if (state.activeHumanId === player.id) {
-        // Pick another human as activeHumanId (needed for auth/commands)
         state.activeHumanId = activeHumans[0];
       }
     } else if (state.activeHumanId === player.id) {
-      // 1v1: Active player left mid-match
       state.activeHumanId = null;
       if (state.matchState === "PLAYING" || state.matchState === "GOAL_SCORED" || state.matchState === "MATCH_OVER") {
         stopGame();
@@ -353,7 +536,6 @@
         promoteNextHuman();
       }
     }
-    // If a queued human left, they were already removed from the array above
     emitRoomStatus();
   };
 
@@ -362,22 +544,38 @@
     state.matchScore = { red: 0, blue: 0 };
     ensureTeams();
 
-    room.setScoreLimit(state.scoreLimit);
-    room.setTimeLimit(state.timeLimit);
-
-    broadcast(room, "Match started! First to " + state.scoreLimit + ".");
+    if (isSquaresMode) {
+      room.setScoreLimit(0);
+      room.setTimeLimit(0);
+      // Teleport everyone to their courts after a short delay for disc init
+      setTimeout(() => teleportToCourts(), 150);
+      broadcast(room, "Antrenman basladi!");
+    } else {
+      room.setScoreLimit(state.scoreLimit);
+      room.setTimeLimit(state.timeLimit);
+      broadcast(room, "Match started! First to " + state.scoreLimit + ".");
+    }
     window.__HB_BRIDGE__?.post("room.gameStart", {});
   };
 
   room.onGameStop = function () {
     window.__HB_BRIDGE__?.post("room.gameStop", {});
 
-    if (state.matchState === "MATCH_OVER" || state.matchState === "RESETTING") {
-      // Expected stop — lifecycle will handle next step
+    if (isSquaresMode) {
+      // Squares: auto-restart if humans are still present
+      if (squaresHasHumans() && squaresHasBots()) {
+        transitionTo("WAITING");
+        setTimeout(() => squaresStartGameIfReady(), 500);
+      } else {
+        transitionTo("WAITING");
+      }
       return;
     }
 
-    // Unexpected stop during play
+    if (state.matchState === "MATCH_OVER" || state.matchState === "RESETTING") {
+      return;
+    }
+
     if (state.matchState === "PLAYING" || state.matchState === "GOAL_SCORED") {
       transitionTo("RESETTING");
       scheduleGuarded(() => {
@@ -446,6 +644,11 @@
   room.onGameTick = function () {
     state.tick++;
 
+    if (isSquaresMode) {
+      if (state.matchState === "PLAYING") squaresAiTick();
+      return;
+    }
+
     if (state.matchState === "STARTING") {
       ensureTeams();
       if (state.tick % 30 === 0) attemptAutoStartMatch();
@@ -461,5 +664,13 @@
   };
 
   // Expose lifecycle helpers for commands.js
-  window.__HB_LIFECYCLE__ = { promoteNextHuman, startNewMatch };
+  window.__HB_LIFECYCLE__ = {
+    promoteNextHuman,
+    startNewMatch,
+    isSquaresMode,
+    getCourtByHumanId,
+    unassignHuman,
+    assignHumanToCourt,
+    squaresHasHumans,
+  };
 })();

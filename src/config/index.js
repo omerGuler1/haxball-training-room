@@ -105,7 +105,7 @@ export function loadConfig() {
 
   cfg.stadium.path = process.env.STADIUM_PATH ?? cfg.stadium.path;
 
-  cfg.bots.count = Math.max(0, Math.min(2, parseIntSafe(process.env.BOT_COUNT, cfg.bots.count)));
+  cfg.bots.count = Math.max(0, Math.min(6, parseIntSafe(process.env.BOT_COUNT, cfg.bots.count)));
   if (process.env.BOT_NAMES) {
     cfg.bots.names = process.env.BOT_NAMES.split(",").map((s) => s.trim()).filter(Boolean);
   }

@@ -32,6 +32,14 @@
     }
   }
 
+  function getDisc(room, discIndex) {
+    try {
+      return room.getDiscProperties(discIndex);
+    } catch {
+      return null;
+    }
+  }
+
   function getPlayersWithDisc(room) {
     const list = room.getPlayerList().filter((p) => p.id !== 0);
     const result = [];
@@ -60,6 +68,7 @@
     isBotPlayer,
     pickTrainee,
     getBall,
+    getDisc,
     getPlayersWithDisc,
     estimateBallVel,
     ballSpeed,

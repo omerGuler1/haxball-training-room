@@ -24,11 +24,29 @@
     const lifecycle = window.__HB_LIFECYCLE__;
 
     if (isAfk) {
-      // Un-AFK: remove from afkIds, add to queue (or make active)
+      // ── Un-AFK ─────────────────────────────────────
       state.afkIds = state.afkIds.filter((x) => x !== id);
       broadcast(room, player.name + " is back!");
 
-      if (!state.activeHumanId && state.matchState === "WAITING") {
+      if (lifecycle?.isSquaresMode) {
+        // Squares: try to assign to a free court
+        const court = lifecycle.assignHumanToCourt(id);
+        if (court) {
+          room.setPlayerTeam(id, cfg.training?.traineeTeamId === 1 ? 1 : 2);
+          broadcast(room, player.name + " → " + court.name + " kare!");
+          if (room.getScores() != null) {
+            setTimeout(() => {
+              try { room.setPlayerDiscProperties(id, { x: court.humanSpawnX, y: 0 }); } catch {}
+            }, 200);
+          }
+        } else {
+          // All courts full — queue
+          if (!state.queuedHumanIds.includes(id)) {
+            state.queuedHumanIds.push(id);
+            room.sendAnnouncement("Tum kareler dolu. Sirada #" + state.queuedHumanIds.length + " bekle.", id, 0xdddddd, "small", 1);
+          }
+        }
+      } else if (!state.activeHumanId && state.matchState === "WAITING") {
         state.activeHumanId = id;
         lifecycle?.startNewMatch();
       } else if (!state.queuedHumanIds.includes(id)) {
@@ -36,21 +54,43 @@
         room.sendAnnouncement("You are #" + state.queuedHumanIds.length + " in queue.", id, 0xdddddd, "small", 1);
       }
     } else {
-      // Go AFK: add to afkIds, remove from queue, move to spec
+      // ── Go AFK ─────────────────────────────────────
       state.afkIds.push(id);
       state.queuedHumanIds = state.queuedHumanIds.filter((x) => x !== id);
       room.setPlayerTeam(id, 0);
       broadcast(room, player.name + " is now AFK.");
 
-      if (state.activeHumanId === id) {
-        // Active player going AFK — stop match via lifecycle, promote next
+      if (lifecycle?.isSquaresMode) {
+        // Squares: free their court, promote queued player into it
+        const court = lifecycle.getCourtByHumanId(id);
+        if (court) {
+          court.humanId = null;
+          // Find next queued non-AFK player
+          while (state.queuedHumanIds.length > 0) {
+            const nextId = state.queuedHumanIds.shift();
+            const np = room.getPlayer(nextId);
+            if (!np || state.afkIds.includes(nextId)) continue;
+            court.humanId = nextId;
+            room.setPlayerTeam(nextId, cfg.training?.traineeTeamId === 1 ? 1 : 2);
+            broadcast(room, np.name + " → " + court.name + " kare!");
+            if (room.getScores() != null) {
+              setTimeout(() => {
+                try { room.setPlayerDiscProperties(nextId, { x: court.humanSpawnX, y: 0 }); } catch {}
+              }, 200);
+            }
+            break;
+          }
+          // If no humans left on any court, stop game
+          if (!lifecycle.squaresHasHumans() && room.getScores() != null) {
+            try { room.stopGame(); } catch {}
+          }
+        }
+      } else if (state.activeHumanId === id) {
         state.activeHumanId = null;
         const isGameRunning = state.matchState === "PLAYING" || state.matchState === "GOAL_SCORED" || state.matchState === "MATCH_OVER";
         if (isGameRunning) {
           try { room.stopGame(); } catch {}
         }
-        // promoteNextHuman uses scheduleGuarded internally via startNewMatch,
-        // so we call it directly — the transitionTo inside will invalidate any stale timeouts.
         lifecycle?.promoteNextHuman();
       }
     }
