@@ -434,6 +434,9 @@
     setTimeout(() => {
       room.sendAnnouncement("!afk yazarak spec gecebilirsiniz", player.id, 0xdddddd, "small", 1);
     }, 1500);
+    setTimeout(() => {
+      room.sendAnnouncement("Iletisim ve sohbet icin discord: https://discord.gg/dvJ7bqFT", player.id, 0x66aaff, "small", 1);
+    }, 3000);
 
     if (isAllMode) {
       room.setPlayerTeam(player.id, traineeTeam);
