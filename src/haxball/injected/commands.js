@@ -168,6 +168,33 @@
       return false;
     }
 
+    if (cmd === "kick" || cmd === "ban") {
+      const admins = (cfg.permissions?.adminNicknames || []).map((s) => String(s));
+      if (!admins.includes(player.name)) {
+        reply(room, player.id, "Sadece adminler kullanabilir.");
+        return false;
+      }
+      const arg = (rest[0] || "").trim();
+      if (!arg) {
+        reply(room, player.id, "Kullanim: !kick <id veya isim>  (!players ile id'leri gor)");
+        return false;
+      }
+      const list = room.getPlayerList().filter((p) => p.id !== 0);
+      const numId = Number(arg);
+      let target = Number.isFinite(numId) ? list.find((p) => p.id === numId) : null;
+      if (!target) target = list.find((p) => p.name.toLowerCase() === arg.toLowerCase());
+      if (!target) target = list.find((p) => p.name.toLowerCase().includes(arg.toLowerCase()));
+      if (!target) { reply(room, player.id, "Oyuncu bulunamadi: " + arg); return false; }
+      try { room.kickPlayer(target.id, "Kicked by " + player.name, cmd === "ban"); } catch {}
+      return false;
+    }
+    if (cmd === "players" || cmd === "list") {
+      const list = room.getPlayerList().filter((p) => p.id !== 0);
+      const text = list.map((p) => "#" + p.id + " " + p.name + (p.team === 0 ? " (spec)" : "")).join(", ");
+      reply(room, player.id, text || "(empty)");
+      return false;
+    }
+
     if (cmd === "start") room.startGame();
     else if (cmd === "stop") room.stopGame();
     else if (cmd === "reset") room.stopGame(), setTimeout(() => room.startGame(), 250);
