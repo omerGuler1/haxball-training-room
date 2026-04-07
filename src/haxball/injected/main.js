@@ -246,7 +246,11 @@
     });
   }
 
+  let startingEnteredAt = 0;
   function transitionTo(newState) {
+    if (newState === "STARTING" && state.matchState !== "STARTING") {
+      startingEnteredAt = Date.now();
+    }
     state.matchState = newState;
     lifecycleEpoch++;
     emitRoomStatus();
@@ -268,12 +272,16 @@
   }
 
   function startNewMatch() {
-    // Validate the active human still exists in the room
-    if (state.activeHumanId && !room.getPlayer(state.activeHumanId)) {
-      state.activeHumanId = null;
+    // Validate the active human still exists in the room and isn't AFK
+    if (state.activeHumanId) {
+      const p = room.getPlayer(state.activeHumanId);
+      if (!p || state.afkIds.includes(state.activeHumanId)) {
+        state.activeHumanId = null;
+      }
     }
     if (!state.activeHumanId) {
-      transitionTo("WAITING");
+      // No valid active human — try promoting from queue
+      promoteNextHuman();
       return;
     }
     transitionTo("STARTING");
@@ -285,6 +293,27 @@
       if (state.matchState !== "STARTING") {
         clearInterval(startingPollTimer);
         startingPollTimer = null;
+        return;
+      }
+      // Timeout: if stuck in STARTING for >15s, recover
+      if (Date.now() - startingEnteredAt > 15000) {
+        clearInterval(startingPollTimer);
+        startingPollTimer = null;
+        // Re-validate active human and try again, or promote next
+        if (state.activeHumanId) {
+          const p = room.getPlayer(state.activeHumanId);
+          if (!p || state.afkIds.includes(state.activeHumanId)) {
+            state.activeHumanId = null;
+          }
+        }
+        if (state.activeHumanId) {
+          // Try once more from scratch
+          transitionTo("WAITING");
+          setTimeout(() => startNewMatch(), 100);
+        } else {
+          transitionTo("WAITING");
+          promoteNextHuman();
+        }
         return;
       }
       attemptAutoStartMatch();
@@ -313,11 +342,20 @@
         if (qp) room.sendAnnouncement("You are #" + (i + 1) + " in queue.", qp.id, 0xdddddd, "small", 1);
       }
       startNewMatch();
-    } else {
-      state.activeHumanId = null;
-      transitionTo("WAITING");
-      broadcast(room, "Waiting for players...");
+      return;
     }
+    // No queue — but check if any non-AFK human in humanIds we missed
+    const fallback = state.humanIds.find((id) => !state.afkIds.includes(id) && room.getPlayer(id));
+    if (fallback) {
+      state.activeHumanId = fallback;
+      const p = room.getPlayer(fallback);
+      if (p) broadcast(room, p.name + " is up next!");
+      startNewMatch();
+      return;
+    }
+    state.activeHumanId = null;
+    transitionTo("WAITING");
+    broadcast(room, "Waiting for players...");
   }
 
   // ── AI tick ─────────────────────────────────────────────
@@ -674,9 +712,11 @@
     promoteNextHuman,
     startNewMatch,
     isSquaresMode,
+    isAllMode,
     getCourtByHumanId,
     unassignHuman,
     assignHumanToCourt,
     squaresHasHumans,
+    squaresStartGameIfReady,
   };
 })();

@@ -28,16 +28,21 @@
       state.afkIds = state.afkIds.filter((x) => x !== id);
       broadcast(room, player.name + " is back!");
 
+      const traineeId = cfg.training?.traineeTeamId === 1 ? 1 : 2;
+
       if (lifecycle?.isSquaresMode) {
         // Squares: try to assign to a free court
         const court = lifecycle.assignHumanToCourt(id);
         if (court) {
-          room.setPlayerTeam(id, cfg.training?.traineeTeamId === 1 ? 1 : 2);
+          room.setPlayerTeam(id, traineeId);
           broadcast(room, player.name + " → " + court.name + " kare!");
           if (room.getScores() != null) {
             setTimeout(() => {
               try { room.setPlayerDiscProperties(id, { x: court.humanSpawnX, y: 0 }); } catch {}
             }, 200);
+          } else {
+            // No game running — start it now
+            lifecycle.squaresStartGameIfReady?.();
           }
         } else {
           // All courts full — queue
@@ -46,7 +51,15 @@
             room.sendAnnouncement("Tum kareler dolu. Sirada #" + state.queuedHumanIds.length + " bekle.", id, 0xdddddd, "small", 1);
           }
         }
-      } else if (!state.activeHumanId && state.matchState === "WAITING") {
+      } else if (lifecycle?.isAllMode) {
+        // All mode: put player back on team
+        room.setPlayerTeam(id, traineeId);
+        if (!state.activeHumanId) state.activeHumanId = id;
+        if (state.matchState === "WAITING") {
+          lifecycle?.startNewMatch();
+        }
+      } else if (!state.activeHumanId) {
+        // 1v1: no active player — take the slot and start
         state.activeHumanId = id;
         lifecycle?.startNewMatch();
       } else if (!state.queuedHumanIds.includes(id)) {
@@ -84,6 +97,18 @@
           if (!lifecycle.squaresHasHumans() && room.getScores() != null) {
             try { room.stopGame(); } catch {}
           }
+        }
+      } else if (lifecycle?.isAllMode) {
+        // All mode: pick another non-AFK human as activeHumanId
+        const remaining = state.humanIds.filter((x) => !state.afkIds.includes(x) && room.getPlayer(x));
+        if (remaining.length === 0) {
+          state.activeHumanId = null;
+          const isGameRunning = state.matchState === "PLAYING" || state.matchState === "GOAL_SCORED" || state.matchState === "MATCH_OVER";
+          if (isGameRunning) {
+            try { room.stopGame(); } catch {}
+          }
+        } else if (state.activeHumanId === id) {
+          state.activeHumanId = remaining[0];
         }
       } else if (state.activeHumanId === id) {
         state.activeHumanId = null;
