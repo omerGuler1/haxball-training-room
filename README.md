@@ -1,153 +1,91 @@
-# Haxball Training Room Host + Cooperative Bots
+# Haxball Adversarial Training Rooms
 
-A production-quality Node.js project that hosts a **private Haxball training room** (official headless host) and runs **1–2 cooperative passing bots** for solo drills (pass & move, wall pass, triangle support).
+A 24/7 Haxball training server hosting **adversarial bots** that play against humans. Supports multiple modes (1v1 queue, free-for-all, multi-court free play) with auto-restart, AFK handling, and a queue system.
 
-This project is designed for **you training alone** with bots that **help**, not compete.
+## Modes
 
-## What’s truly possible (and why this architecture)
+- **`1v1`** — Queue-based 1v1 against a bot. New players wait in spectator until their turn.
+- **`all`** — Everyone joins blue team, plays together against bots (red).
+- **`squares`** — Multi-court free play. Map has 3 separate courts with their own balls; each court has its own bot, players are auto-assigned to courts as they join.
 
-Haxball’s **official headless host API** is great for:
-- Creating rooms (`HBInit`)
-- Receiving events (`onPlayerJoin`, `onGameTick`, etc.)
-- Reading game state (disc positions/ball/player discs via `getPlayerDiscProperties`, `getDiscProperties`, etc.)
-- Managing teams and the match (start/stop, stadium, lock teams)
+## Tech stack
 
-However, the official headless API does **not** provide a supported way for the host to directly “press keys” for a player entity. That means “AI bots” that move/kick like real players typically require **real client connections**.
+- **Node.js + Puppeteer** — Each Haxball player (host + bots) is a real headless Chrome instance.
+- **Two-process architecture** — A *host* runs `HBInit` and decides bot intents; *bot processes* are real clients that join the room and execute key inputs.
+- **WebSocket IPC** — Host streams bot control packets (move axes, kick) to bot processes over a local WebSocket.
+- **Browser-injected JS** — `state`, `perception`, `decision`, and `main` modules are concatenated and injected into the headless host page; they run inside the Haxball room context.
+- **Lifecycle epoch** — Match transitions bump an epoch counter; pending `setTimeout` callbacks check the epoch and bail out if state has changed since they were scheduled (prevents stale auto-restart races).
+- **Cloudflare-resilient join flow** — Bot join detects Haxball's iframe, fills the nickname input, clicks the OK button, and retries with backoff if blocked.
+- **PM2-friendly** — Orchestrator forks host + bot processes with auto-restart and exponential backoff.
 
-So this repo uses a **two-layer architecture**:
+## Architecture
 
-1. **Host process (headless room)**: runs the room, loads your stadium (`bats_map.hbs`), reads authoritative positions, decides what bots should do.
-2. **Bot client process(es)**: 1–2 automated browser clients join the room like normal players and execute inputs (move/kick) via controlled key state.
-
-This is the most practical, robust, “official-API-friendly” way to get **real moving bots**.
-
-## Architecture overview
-
-```mermaid
-flowchart TD
-  Orchestrator["Node orchestrator"] --> Host["Headless host page (Puppeteer)"]
-  Host --> Room["HBInit RoomObject"]
-  Room -->|"onRoomLink"| Orchestrator
-  Orchestrator --> Bot1["Bot client #1 (Puppeteer)"]
-  Orchestrator --> Bot2["Bot client #2 (Puppeteer)"]
-  Host -->|"Local WS control packets"| Bot1
-  Host -->|"Local WS control packets"| Bot2
-  Room -->|"onGameTick perception"| AI["AI system (perception→decision→action)"]
-  AI -->|"bot intents"| Host
+```
+┌─────────────────┐
+│  Orchestrator   │  forks host + bot processes
+└────────┬────────┘
+         │
+    ┌────┴────────────────────────────┐
+    │                                  │
+┌───▼──────────────┐         ┌────────▼─────────┐
+│ Host (Puppeteer) │         │ Bots (Puppeteer) │
+│                  │  ◄────► │                  │
+│  HBInit room     │   WS    │  Real clients    │
+│  AI ticks        │         │  Press keys      │
+└──────────────────┘         └──────────────────┘
 ```
 
-## Features
+The host injects browser-side modules into the headless page:
 
-- **Private by default**: passworded room, not public-listed.
-- **No visible host player**: uses `noPlayer: true` so the host doesn’t appear as a player.
-- **Custom stadium from disk**: loads `bats_map.hbs` locally (configurable path).
-- **1 or 2 bots**: configurable and changeable at runtime via chat commands.
-- **Modes**:
-  - `solo`: one bot supports and returns passes
-  - `triangle`: two bots maintain spacing and rotate options
-  - `wall`: one bot acts as a wall-pass helper near boards
-  - `free`: relaxed cooperative movement and passing
-- **Human trainee identification**:
-  - by configured nickname (primary)
-  - optionally by auth if available
-  - fallback to first human who joins
-- **Bot realism controls**: smoothing, deadzones, reaction delay, receive logic (one-touch vs settle), pass cooldowns, support distance tuning.
-- **Chat commands**: `!help`, `!mode`, `!bots`, `!trainee`, `!passspeed`, `!supportdist`, `!start`, `!stop`, `!reset`, `!reloadstadium`, `!status`, debug toggles.
-- **VPS-ready**: Puppeteer flags and notes for WebRTC/mDNS issues.
-
-## Requirements
-
-- Node.js 18+ recommended
-- A Haxball **headless token** (see below)
-- Chrome/Chromium (Puppeteer will download Chromium by default unless configured otherwise)
+- `state.js` — Mutable match state (mode, scores, queue, AFK list, courts)
+- `perception.js` — Reads ball/disc/player positions from the room
+- `decision.js` — Bot AI: chase ball, kick when in control
+- `commands.js` — Chat command parser (`!afk`, `!kick`, `!players`, etc.)
+- `main.js` — Wires up `HBInit` callbacks, runs the match lifecycle, drives the AI tick
 
 ## Setup
 
-1. Install dependencies
-
 ```bash
 npm install
-```
-
-2. Create your `.env`
-
-```bash
 cp .env.example .env
+# fill HAXBALL_TOKEN, ADMIN_NICKNAMES, etc.
+node src/index.js
 ```
 
-3. Fill `.env` values:
-- `HAXBALL_TOKEN` (required)
-- `ROOM_PASSWORD` (recommended)
-- `TRAINEE_NICKNAME` (recommended)
-
-4. Run
+For multi-room setups, pass an env file:
 
 ```bash
-npm run start
+node src/index.js --env .env.3squares
 ```
 
-This starts:
-- the headless host room
-- 1–2 bot clients (per config)
+## Running 24/7 with PM2
 
-Then you join the printed room link as the trainee.
+```bash
+pm2 start src/index.js --name "3squares" -- --env .env.3squares
+pm2 save
+pm2 startup   # auto-start on reboot
+```
 
-## Getting a Haxball headless token
-
-Haxball headless hosting requires a token. The typical workflow:
-- Open the official headless page in your browser.
-- Follow the token generation steps shown there.
-- Put the token into `.env` as `HAXBALL_TOKEN`.
-
-This repo doesn’t attempt to scrape/automate token issuance.
-
-## Using your custom stadium
-
-By default this repo loads:
-- `bats_map.hbs` (already present in the workspace)
-
-You can change the stadium path in config via env/config file (see `src/config` once generated).
-
-If stadium loading fails, the room will continue using the previous stadium and will print a clear error.
+PM2 restarts crashed processes; the orchestrator restarts crashed bots; bot processes retry the room join on Cloudflare blocks.
 
 ## Chat commands
 
-In the room chat:
-- `!help` — command list
-- `!mode solo|triangle|wall|free`
-- `!bots 1|2`
-- `!trainee <nickname>`
-- `!passspeed <number>`
-- `!supportdist <number>`
-- `!start` / `!stop` / `!reset`
-- `!reloadstadium`
-- `!botdebug on|off`
-- `!status`
+- `!afk` — toggle AFK status (frees court / queue slot)
+- `!status` — current match state, score, queue size
+- `!players` — list players with IDs *(admin)*
+- `!kick <id|name>` / `!ban <id|name>` *(admin)*
+- `!start` / `!stop` / `!reset` *(admin)*
 
-Authorization:
-- Trainee is allowed to control training commands by default.
-- Additional admins can be configured.
+## Configuration
 
-## Running on a VPS (notes)
+Key environment variables:
 
-- Haxball connectivity can break on some VPS setups due to WebRTC local IP mDNS hiding. A common Chrome workaround is launching with:
-  - `--disable-features=WebRtcHideLocalIpsWithMdns`
-- If you run inside Docker or a restricted VPS environment you may also need:
-  - `--no-sandbox` / `--disable-setuid-sandbox` (security trade-off)
-
-This project exposes Puppeteer launch args in config so you can tune this for your environment.
-
-## Troubleshooting
-
-- **Room created but players can’t connect**: try the mDNS/WebRTC flag above on the VPS.
-- **Chromium won’t launch on VPS**: install required system deps (fontconfig, libnss3, etc.) or use a full Chrome install and point Puppeteer at it.
-- **Bots join but don’t move**: check bot debug mode (`!botdebug on`), verify IPC is connected and bot key state is changing.
-- **Stadium didn’t load**: validate the `.hbs` is valid JSON (your `bats_map.hbs` is JSON-formatted).
-
-## Known limitations
-
-- Bots are **real clients** driven by simulated key inputs; they are not “native” API bots.
-- “Pass power” is **approximated** by varying kick key press duration; Haxball does not expose an official per-kick power parameter.
-- Some Haxball UI flows can change; bot join logic is written to be resilient, but major UI changes may require updating selectors/flows.
-- This is a training-oriented AI (cooperative), not a competitive defender/attacker.
-
+| Var | Description |
+|-----|-------------|
+| `HAXBALL_TOKEN` | Headless token from `haxball.com/headlesstoken` (24h expiry) |
+| `STADIUM_PATH` | Path to `.hbs` stadium file |
+| `MATCH_MODE` | `1v1`, `all`, or `squares` |
+| `BOT_COUNT` / `BOT_NAMES` | Number and names of bots |
+| `ADMIN_NICKNAMES` | Comma-separated list of admin nicks |
+| `PUPPETEER_HEADLESS` | `true` for VPS, `false` for local debugging |
+| `PUPPETEER_EXECUTABLE_PATH` | Chrome path on VPS (e.g. `/usr/bin/google-chrome`) |
