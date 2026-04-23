@@ -172,6 +172,13 @@ export async function startHost({ onReady }) {
           log.error(`Auth profile error: ${e?.message || e}`);
         }
       })();
+    } else if (msg.type === "record.update") {
+      const { playerName, seconds } = msg.payload || {};
+      try {
+        db.setRecord(config.room.name, playerName, seconds);
+      } catch (e) {
+        log.error(`Record update failed: ${e?.message || e}`);
+      }
     } else if (msg.type === "room.statusUpdate") {
       const p = msg.payload || {};
       try {
@@ -215,16 +222,27 @@ export async function startHost({ onReady }) {
   // `domcontentloaded` is sometimes too early and HBInit isn't defined yet.
   await page.waitForFunction(() => typeof window.HBInit === "function", { timeout: 30_000 });
 
+  // Load existing record from DB
+  let existingRecord = null;
+  try {
+    const row = db.getRecord(config.room.name);
+    if (row) existingRecord = { name: row.player_name, seconds: row.seconds };
+  } catch (e) {
+    log.warn(`Could not load record: ${e?.message || e}`);
+  }
+
   await page.evaluate(
-    (cfg, stadiumJson) => {
+    (cfg, stadiumJson, record) => {
       window.__HB_CONFIG__ = cfg;
       if (stadiumJson) {
         window.__HB_CONFIG__.stadium = window.__HB_CONFIG__.stadium || {};
         window.__HB_CONFIG__.stadium.jsonString = stadiumJson;
       }
+      window.__HB_CONFIG__.initialRecord = record;
     },
     config,
-    stadiumJsonString
+    stadiumJsonString,
+    existingRecord
   );
 
   await page.evaluate(injected);

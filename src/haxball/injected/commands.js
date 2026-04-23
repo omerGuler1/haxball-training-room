@@ -36,6 +36,9 @@
         if (court) {
           room.setPlayerTeam(id, traineeId);
           broadcast(room, player.name + " → " + court.name + " kare!");
+          setTimeout(() => {
+            room.sendAnnouncement("Topu bottan uzak tut, bot degerse sayac sifirlanir.", id, 0xffcc66, "small", 1);
+          }, 1000);
           if (room.getScores() != null) {
             setTimeout(() => {
               try { room.setPlayerDiscProperties(id, { x: court.humanSpawnX, y: 0 }); } catch {}
@@ -78,14 +81,21 @@
         const court = lifecycle.getCourtByHumanId(id);
         if (court) {
           court.humanId = null;
+          court.counterTicks = 0;
+          court.lastAnnouncedSec = 0;
           // Find next queued non-AFK player
           while (state.queuedHumanIds.length > 0) {
             const nextId = state.queuedHumanIds.shift();
             const np = room.getPlayer(nextId);
             if (!np || state.afkIds.includes(nextId)) continue;
             court.humanId = nextId;
+            court.counterTicks = 0;
+            court.lastAnnouncedSec = 0;
             room.setPlayerTeam(nextId, cfg.training?.traineeTeamId === 1 ? 1 : 2);
             broadcast(room, np.name + " → " + court.name + " kare!");
+            setTimeout(() => {
+              room.sendAnnouncement("Topu bottan uzak tut, bot degerse sayac sifirlanir.", nextId, 0xffcc66, "small", 1);
+            }, 1000);
             if (room.getScores() != null) {
               setTimeout(() => {
                 try { room.setPlayerDiscProperties(nextId, { x: court.humanSpawnX, y: 0 }); } catch {}
@@ -131,7 +141,7 @@
       reply(
         room,
         player.id,
-        "Commands: !help !kayit <sifre> !giris <sifre> !bagla !profil !afk !start !stop !reset !status"
+        "Commands: !help !kayit <sifre> !giris <sifre> !bagla !profil !afk !rekor !start !stop !reset !status"
       );
       return false;
     }
@@ -185,6 +195,17 @@
     // !afk is available to everyone (no auth needed)
     if (cmd === "afk") {
       handleAfk(room, state, player);
+      return false;
+    }
+
+    // !rekor is available to everyone
+    if (cmd === "rekor") {
+      const rec = state.record;
+      if (rec && rec.seconds > 0 && rec.name) {
+        reply(room, player.id, "Rekor sahibi: " + rec.name + " - " + rec.seconds + " sn");
+      } else {
+        reply(room, player.id, "Henuz rekor yok. Topu bottan uzak tut!");
+      }
       return false;
     }
 

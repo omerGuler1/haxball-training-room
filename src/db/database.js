@@ -19,6 +19,13 @@ CREATE TABLE IF NOT EXISTS link_codes (
   created_at TEXT DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS room_records (
+  room_name TEXT PRIMARY KEY,
+  player_name TEXT NOT NULL,
+  seconds INTEGER NOT NULL,
+  achieved_at TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS room_status (
   room_name TEXT PRIMARY KEY,
   match_state TEXT,
@@ -82,6 +89,23 @@ export function openDatabase(dbPath) {
         db.prepare("DELETE FROM link_codes WHERE id = ?").run(row.id);
       }
       return row || null;
+    },
+
+    // ── Room Records ─────────────────────────────────
+
+    getRecord(roomName) {
+      return db.prepare("SELECT * FROM room_records WHERE room_name = ?").get(roomName);
+    },
+
+    setRecord(roomName, playerName, seconds) {
+      return db.prepare(`
+        INSERT INTO room_records (room_name, player_name, seconds, achieved_at)
+        VALUES (?, ?, ?, datetime('now'))
+        ON CONFLICT(room_name) DO UPDATE SET
+          player_name = excluded.player_name,
+          seconds = excluded.seconds,
+          achieved_at = datetime('now')
+      `).run(roomName, playerName, seconds);
     },
 
     // ── Room Status ─────────────────────────────────

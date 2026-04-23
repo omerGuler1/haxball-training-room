@@ -72,6 +72,8 @@
     for (const ci of state.courtJoinOrder) {
       if (!state.courts[ci].humanId) {
         state.courts[ci].humanId = humanId;
+        state.courts[ci].counterTicks = 0;
+        state.courts[ci].lastAnnouncedSec = 0;
         return state.courts[ci];
       }
     }
@@ -81,7 +83,11 @@
   function unassignHuman(humanId) {
     if (!state.courts) return;
     const court = state.courts.find((c) => c.humanId === humanId);
-    if (court) court.humanId = null;
+    if (court) {
+      court.humanId = null;
+      court.counterTicks = 0;
+      court.lastAnnouncedSec = 0;
+    }
   }
 
   function unassignBot(botId) {
@@ -144,6 +150,36 @@
       const botPlayer = players.find((x) => x.p.id === court.botId);
       if (!botPlayer?.disc || !ball) continue;
 
+      // ── Counter: bot topa değerse sıfırla ──────────
+      const dx = botPlayer.disc.x - ball.x;
+      const dy = botPlayer.disc.y - ball.y;
+      const distSq = dx * dx + dy * dy;
+      const BOT_TOUCH_THRESHOLD_SQ = 28 * 28;
+      if (distSq < BOT_TOUCH_THRESHOLD_SQ) {
+        const elapsedSec = Math.floor(court.counterTicks / 60);
+        if (elapsedSec >= 5) {
+          room.sendAnnouncement("Sifirlandi! Bot topa dokundu. Suren: " + elapsedSec + " sn", court.humanId, 0xff8866, "small", 1);
+        }
+        // Check for new record
+        if (elapsedSec > (state.record?.seconds ?? 0)) {
+          const holder = room.getPlayer(court.humanId);
+          if (holder) {
+            state.record = { name: holder.name, seconds: elapsedSec };
+            broadcast(room, "Yeni rekor: " + elapsedSec + " sn - " + holder.name);
+            window.__HB_BRIDGE__?.post("record.update", { playerName: holder.name, seconds: elapsedSec });
+          }
+        }
+        court.counterTicks = 0;
+        court.lastAnnouncedSec = 0;
+      } else {
+        court.counterTicks++;
+        const currentSec = Math.floor(court.counterTicks / 60);
+        if (currentSec > 0 && currentSec % 5 === 0 && currentSec !== court.lastAnnouncedSec) {
+          room.sendAnnouncement("Sure: " + currentSec + " sn", court.humanId, 0x66ff66, "small", 1);
+          court.lastAnnouncedSec = currentSec;
+        }
+      }
+
       const mem = getMem(botPlayer.p.name);
       const intent = adversarialIntent(ball, court.ballVel, botPlayer.disc, mem?.lastKickTick ?? -999999, state.tick);
       if (intent.kick && mem) mem.lastKickTick = state.tick;
@@ -156,6 +192,12 @@
         kickPower: intent.kickPower,
       });
     }
+  }
+
+  function resetCourtCounter(court) {
+    if (!court) return;
+    court.counterTicks = 0;
+    court.lastAnnouncedSec = 0;
   }
 
   function countOnTeam(teamId) {
@@ -445,6 +487,9 @@
       if (court) {
         room.setPlayerTeam(player.id, traineeTeam);
         broadcast(room, player.name + " → " + court.name + " kare!");
+        setTimeout(() => {
+          room.sendAnnouncement("Topu bottan uzak tut, bot degerse sayac sifirlanir.", player.id, 0xffcc66, "small", 1);
+        }, 4500);
         if (room.getScores() != null) {
           setTimeout(() => {
             try { room.setPlayerDiscProperties(player.id, { x: court.humanSpawnX, y: 0 }); } catch {}
@@ -520,6 +565,8 @@
       const court = getCourtByHumanId(player.id);
       if (court) {
         court.humanId = null;
+        court.counterTicks = 0;
+        court.lastAnnouncedSec = 0;
         broadcast(room, player.name + " ayrildi (" + court.name + " kare bos).");
         // Promote queued player into freed court
         while (state.queuedHumanIds.length > 0) {
@@ -527,8 +574,13 @@
           const np = room.getPlayer(nextId);
           if (!np || state.afkIds.includes(nextId)) continue;
           court.humanId = nextId;
+          court.counterTicks = 0;
+          court.lastAnnouncedSec = 0;
           room.setPlayerTeam(nextId, traineeTeam);
           broadcast(room, np.name + " → " + court.name + " kare!");
+          setTimeout(() => {
+            room.sendAnnouncement("Topu bottan uzak tut, bot degerse sayac sifirlanir.", nextId, 0xffcc66, "small", 1);
+          }, 1000);
           if (room.getScores() != null) {
             setTimeout(() => {
               try { room.setPlayerDiscProperties(nextId, { x: court.humanSpawnX, y: 0 }); } catch {}
