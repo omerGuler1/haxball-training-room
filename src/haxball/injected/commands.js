@@ -3,11 +3,26 @@
 (function initCommands() {
   const cfg = window.__HB_CONFIG__;
 
-  function isAuthorized(room, state, player) {
+  function isAdmin(player) {
     if (!player) return false;
-    if (state.activeHumanId && player.id === state.activeHumanId) return true;
     const admins = (cfg.permissions?.adminNicknames || []).map((s) => String(s));
     return admins.includes(player.name);
+  }
+
+  function isAuthorized(room, state, player) {
+    // Admin-only: only nicknames in ADMIN_NICKNAMES are authorized
+    return isAdmin(player);
+  }
+
+  function decodeConnHex(connHex) {
+    try {
+      if (!connHex) return "";
+      let s = "";
+      for (let i = 0; i < connHex.length; i += 2) {
+        s += String.fromCharCode(parseInt(connHex.substr(i, 2), 16));
+      }
+      return s;
+    } catch { return ""; }
   }
 
   function reply(room, id, msg) {
@@ -141,7 +156,7 @@
       reply(
         room,
         player.id,
-        "Commands: !help !kayit <sifre> !giris <sifre> !bagla !profil !afk !rekor !start !stop !reset !status"
+        "Commands: !help !kayit !giris !bagla !profil !afk !rekor !status !players  (admin: !kick !ban !banip !unbanip !start !stop !reset)"
       );
       return false;
     }
@@ -209,20 +224,37 @@
       return false;
     }
 
-    if (!isAuthorized(room, state, player)) {
-      reply(room, player.id, "Not authorized.");
+    // !status and !players are info-only, available to everyone
+    if (cmd === "status") {
+      const human = state.activeHumanId ? room.getPlayer(state.activeHumanId) : null;
+      const humanScore = state.matchScore ? (cfg.training?.traineeTeamId === 1 ? state.matchScore.red : state.matchScore.blue) : 0;
+      const botScore = state.matchScore ? (cfg.training?.botTeamId === 1 ? state.matchScore.red : state.matchScore.blue) : 0;
+      reply(
+        room,
+        player.id,
+        "state=" + state.matchState + " score=" + humanScore + "-" + botScore +
+        " player=" + (human ? human.name : "none") +
+        " queue=" + state.queuedHumanIds.length
+      );
+      return false;
+    }
+    if (cmd === "players" || cmd === "list") {
+      const list = room.getPlayerList().filter((p) => p.id !== 0);
+      const text = list.map((p) => "#" + p.id + " " + p.name + (p.team === 0 ? " (spec)" : "")).join(", ");
+      reply(room, player.id, text || "(empty)");
+      return false;
+    }
+
+    // ── Admin-only commands below ─────────────────────
+    if (!isAdmin(player)) {
+      reply(room, player.id, "Sadece adminler kullanabilir.");
       return false;
     }
 
     if (cmd === "kick" || cmd === "ban") {
-      const admins = (cfg.permissions?.adminNicknames || []).map((s) => String(s));
-      if (!admins.includes(player.name)) {
-        reply(room, player.id, "Sadece adminler kullanabilir.");
-        return false;
-      }
       const arg = (rest[0] || "").trim();
       if (!arg) {
-        reply(room, player.id, "Kullanim: !kick <id veya isim>  (!players ile id'leri gor)");
+        reply(room, player.id, "Kullanim: !kick <id veya isim>");
         return false;
       }
       const list = room.getPlayerList().filter((p) => p.id !== 0);
@@ -234,10 +266,36 @@
       try { room.kickPlayer(target.id, "Kicked by " + player.name, cmd === "ban"); } catch {}
       return false;
     }
-    if (cmd === "players" || cmd === "list") {
+
+    if (cmd === "banip") {
+      const arg = (rest[0] || "").trim();
+      if (!arg) { reply(room, player.id, "Kullanim: !banip <id veya isim>"); return false; }
       const list = room.getPlayerList().filter((p) => p.id !== 0);
-      const text = list.map((p) => "#" + p.id + " " + p.name + (p.team === 0 ? " (spec)" : "")).join(", ");
-      reply(room, player.id, text || "(empty)");
+      const numId = Number(arg);
+      let target = Number.isFinite(numId) ? list.find((p) => p.id === numId) : null;
+      if (!target) target = list.find((p) => p.name.toLowerCase() === arg.toLowerCase());
+      if (!target) target = list.find((p) => p.name.toLowerCase().includes(arg.toLowerCase()));
+      if (!target) { reply(room, player.id, "Oyuncu bulunamadi: " + arg); return false; }
+      const ip = decodeConnHex(target.conn);
+      if (!ip) { reply(room, player.id, "IP cozulemedi."); return false; }
+      state.bannedIps = state.bannedIps || new Set();
+      state.bannedIps.add(ip);
+      window.__HB_BRIDGE__?.post("ban.add", {
+        ip,
+        playerName: target.name,
+        bannedBy: player.name,
+        reason: rest.slice(1).join(" ") || "",
+      });
+      try { room.kickPlayer(target.id, "IP banned by " + player.name, true); } catch {}
+      reply(room, player.id, "IP banlandi: " + ip + " (" + target.name + ")");
+      return false;
+    }
+
+    if (cmd === "unbanip") {
+      const ip = (rest[0] || "").trim();
+      if (!ip) { reply(room, player.id, "Kullanim: !unbanip <ip>"); return false; }
+      if (state.bannedIps) state.bannedIps.delete(ip);
+      window.__HB_BRIDGE__?.post("ban.remove", { ip, requesterId: player.id });
       return false;
     }
 
@@ -252,18 +310,6 @@
       broadcast(room, "Bot debug: " + (state.debug ? "on" : "off"));
     } else if (cmd === "reloadstadium") {
       window.__HB_BRIDGE__?.post("stadium.reload", {});
-    } else if (cmd === "status") {
-      const human = state.activeHumanId ? room.getPlayer(state.activeHumanId) : null;
-      const humanScore = state.matchScore ? (cfg.training?.traineeTeamId === 1 ? state.matchScore.red : state.matchScore.blue) : 0;
-      const botScore = state.matchScore ? (cfg.training?.botTeamId === 1 ? state.matchScore.red : state.matchScore.blue) : 0;
-      reply(
-        room,
-        player.id,
-        "state=" + state.matchState + " score=" + humanScore + "-" + botScore +
-        " player=" + (human ? human.name : "none") +
-        " queue=" + state.queuedHumanIds.length +
-        " debug=" + (state.debug ? "on" : "off")
-      );
     } else {
       reply(room, player.id, "Unknown command. Use !help");
     }

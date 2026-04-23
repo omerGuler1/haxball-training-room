@@ -172,6 +172,34 @@ export async function startHost({ onReady }) {
           log.error(`Auth profile error: ${e?.message || e}`);
         }
       })();
+    } else if (msg.type === "player.logIp") {
+      const { playerName, ip, auth } = msg.payload || {};
+      try {
+        db.logPlayerIp(config.room.name, playerName, ip, auth);
+      } catch (e) {
+        log.error(`logPlayerIp failed: ${e?.message || e}`);
+      }
+    } else if (msg.type === "ban.add") {
+      const { ip, playerName, bannedBy, reason } = msg.payload || {};
+      try {
+        db.addBannedIp(ip, playerName, bannedBy, reason);
+      } catch (e) {
+        log.error(`addBannedIp failed: ${e?.message || e}`);
+      }
+    } else if (msg.type === "ban.remove") {
+      const { ip, requesterId } = msg.payload || {};
+      (async () => {
+        try {
+          db.removeBannedIp(ip);
+          if (requesterId != null) {
+            await page.evaluate((id, t) => {
+              window.__HB_ROOM__?.sendAnnouncement(t, id, 0x66ff66, "small", 1);
+            }, requesterId, "IP ban kaldirildi: " + ip);
+          }
+        } catch (e) {
+          log.error(`removeBannedIp failed: ${e?.message || e}`);
+        }
+      })();
     } else if (msg.type === "record.update") {
       const { playerName, seconds } = msg.payload || {};
       try {
@@ -231,18 +259,28 @@ export async function startHost({ onReady }) {
     log.warn(`Could not load record: ${e?.message || e}`);
   }
 
+  // Load banned IPs
+  let bannedIpsList = [];
+  try {
+    bannedIpsList = db.listBannedIps().map((b) => b.ip);
+  } catch (e) {
+    log.warn(`Could not load banned IPs: ${e?.message || e}`);
+  }
+
   await page.evaluate(
-    (cfg, stadiumJson, record) => {
+    (cfg, stadiumJson, record, bannedIps) => {
       window.__HB_CONFIG__ = cfg;
       if (stadiumJson) {
         window.__HB_CONFIG__.stadium = window.__HB_CONFIG__.stadium || {};
         window.__HB_CONFIG__.stadium.jsonString = stadiumJson;
       }
       window.__HB_CONFIG__.initialRecord = record;
+      window.__HB_CONFIG__.bannedIps = bannedIps || [];
     },
     config,
     stadiumJsonString,
-    existingRecord
+    existingRecord,
+    bannedIpsList
   );
 
   await page.evaluate(injected);

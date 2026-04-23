@@ -450,12 +450,37 @@
     applyStadium();
   };
 
+  function decodeConn(connHex) {
+    try {
+      if (!connHex) return "";
+      let s = "";
+      for (let i = 0; i < connHex.length; i += 2) {
+        s += String.fromCharCode(parseInt(connHex.substr(i, 2), 16));
+      }
+      return s;
+    } catch { return ""; }
+  }
+
   room.onPlayerJoin = function (player) {
     window.__HB_BRIDGE__?.post("room.playerJoin", { id: player.id, name: player.name, team: player.team });
 
     // ── Bot avatar ─────────────────────────────────────
     if (isBotPlayer(player)) {
       room.setPlayerAvatar(player.id, "🦇");
+    }
+
+    // ── IP ban check + logging (humans only) ──────────
+    if (!isBotPlayer(player)) {
+      const ip = decodeConn(player.conn);
+      if (ip && state.bannedIps?.has(ip)) {
+        try { room.kickPlayer(player.id, "IP banned", false); } catch {}
+        return;
+      }
+      window.__HB_BRIDGE__?.post("player.logIp", {
+        playerName: player.name,
+        ip,
+        auth: player.auth || "",
+      });
     }
 
     // ── Squares mode ──────────────────────────────────

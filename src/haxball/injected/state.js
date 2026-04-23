@@ -39,6 +39,9 @@
     ? { name: String(ir.name || ""), seconds: Number(ir.seconds) || 0 }
     : { name: "", seconds: 0 };
 
+  // ── Banned IPs (runtime set, synced from DB) ──────────
+  state.bannedIps = new Set(Array.isArray(cfg.bannedIps) ? cfg.bannedIps : []);
+
   // ── Squares mode: court definitions ──────────────────
   if (state.matchMode === "squares") {
     state.courts = [
