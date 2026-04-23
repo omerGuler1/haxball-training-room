@@ -5,10 +5,12 @@
 
   function isAdmin(player) {
     if (!player) return false;
+    const state = window.__HB_STATE__;
     const authIds = cfg.permissions?.adminAuthIds || [];
     // If auth IDs are configured, use them (secure — tied to Haxball key)
     if (authIds.length > 0) {
-      return !!player.auth && authIds.includes(player.auth);
+      const auth = player.auth || state?.playerAuths?.get(player.id) || "";
+      return !!auth && authIds.includes(auth);
     }
     // Fallback: nickname match (INSECURE — anyone can pick the same name)
     const admins = (cfg.permissions?.adminNicknames || []).map((s) => String(s));
@@ -221,8 +223,7 @@
 
     // !myauth shows the caller their own auth ID privately (for admin setup)
     if (cmd === "myauth") {
-      const p = room.getPlayer(player.id);
-      const auth = p?.auth || "";
+      const auth = state.playerAuths?.get(player.id) || player.auth || "";
       reply(room, player.id, auth ? ("Senin auth ID: " + auth) : "Auth ID okunamadi.");
       return false;
     }

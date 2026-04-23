@@ -476,6 +476,8 @@
         try { room.kickPlayer(player.id, "IP banned", false); } catch {}
         return;
       }
+      // Capture auth — only available here, not from room.getPlayer() later
+      if (player.auth) state.playerAuths.set(player.id, player.auth);
       window.__HB_BRIDGE__?.post("player.logIp", {
         playerName: player.name,
         ip,
@@ -579,6 +581,7 @@
     state.humanIds = state.humanIds.filter((id) => id !== player.id);
     state.queuedHumanIds = state.queuedHumanIds.filter((id) => id !== player.id);
     state.afkIds = state.afkIds.filter((id) => id !== player.id);
+    state.playerAuths?.delete(player.id);
 
     // ── Squares mode ──────────────────────────────────
     if (isSquaresMode) {

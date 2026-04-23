@@ -42,6 +42,9 @@
   // ── Banned IPs (runtime set, synced from DB) ──────────
   state.bannedIps = new Set(Array.isArray(cfg.bannedIps) ? cfg.bannedIps : []);
 
+  // ── Player auths captured on join (id → auth string) ──
+  state.playerAuths = new Map();
+
   // ── Squares mode: court definitions ──────────────────
   if (state.matchMode === "squares") {
     state.courts = [
