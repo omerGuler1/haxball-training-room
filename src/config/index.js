@@ -39,6 +39,7 @@ const DEFAULTS = {
   },
   permissions: {
     adminNicknames: [],
+    adminAuthIds: [],
   },
   db: {
     path: "./data/haxball.db",
@@ -143,6 +144,9 @@ export function loadConfig() {
 
   if (process.env.ADMIN_NICKNAMES) {
     cfg.permissions.adminNicknames = process.env.ADMIN_NICKNAMES.split(",").map((s) => s.trim()).filter(Boolean);
+  }
+  if (process.env.ADMIN_AUTH_IDS) {
+    cfg.permissions.adminAuthIds = process.env.ADMIN_AUTH_IDS.split(",").map((s) => s.trim()).filter(Boolean);
   }
 
   cfg.debug.botDebug = parseBool(process.env.BOT_DEBUG, cfg.debug.botDebug);

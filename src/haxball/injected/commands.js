@@ -5,6 +5,12 @@
 
   function isAdmin(player) {
     if (!player) return false;
+    const authIds = cfg.permissions?.adminAuthIds || [];
+    // If auth IDs are configured, use them (secure — tied to Haxball key)
+    if (authIds.length > 0) {
+      return !!player.auth && authIds.includes(player.auth);
+    }
+    // Fallback: nickname match (INSECURE — anyone can pick the same name)
     const admins = (cfg.permissions?.adminNicknames || []).map((s) => String(s));
     return admins.includes(player.name);
   }
@@ -210,6 +216,14 @@
     // !afk is available to everyone (no auth needed)
     if (cmd === "afk") {
       handleAfk(room, state, player);
+      return false;
+    }
+
+    // !myauth shows the caller their own auth ID privately (for admin setup)
+    if (cmd === "myauth") {
+      const p = room.getPlayer(player.id);
+      const auth = p?.auth || "";
+      reply(room, player.id, auth ? ("Senin auth ID: " + auth) : "Auth ID okunamadi.");
       return false;
     }
 
