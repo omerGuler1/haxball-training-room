@@ -274,7 +274,7 @@
           court.stationaryWarned = false;
           court.counterTicks++;
           const currentSec = Math.floor(court.counterTicks / 60);
-          if (currentSec > 0 && currentSec % 5 === 0 && currentSec !== court.lastAnnouncedSec) {
+          if (currentSec > 0 && currentSec % 10 === 0 && currentSec !== court.lastAnnouncedSec) {
             room.sendAnnouncement("Sure: " + currentSec + " sn", court.humanId, 0x66ff66, "small", 1);
             court.lastAnnouncedSec = currentSec;
           }
