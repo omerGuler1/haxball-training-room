@@ -40,14 +40,20 @@ export async function startHost({ onReady }) {
   const controlPort = await pickFreePort();
   const control = createControlServer({ port: controlPort, logger: log });
 
-  const stadiumPath = path.resolve(process.cwd(), config.stadium.path);
+  const stadiumPath = config.stadium.path
+    ? path.resolve(process.cwd(), config.stadium.path)
+    : null;
   let stadiumJsonString = null;
-  try {
-    stadiumJsonString = await loadStadiumJsonString(stadiumPath);
-    log.info(`Loaded stadium: ${stadiumPath}`);
-  } catch (e) {
-    log.error(`Failed to load stadium: ${stadiumPath}`);
-    log.error(String(e?.message || e));
+  if (stadiumPath) {
+    try {
+      stadiumJsonString = await loadStadiumJsonString(stadiumPath);
+      log.info(`Loaded stadium: ${stadiumPath}`);
+    } catch (e) {
+      log.error(`Failed to load stadium: ${stadiumPath}`);
+      log.error(String(e?.message || e));
+    }
+  } else {
+    log.info("No STADIUM_PATH set — using Haxball default stadium.");
   }
 
   const browser = await puppeteer.launch({
@@ -92,6 +98,10 @@ export async function startHost({ onReady }) {
     } else if (msg.type === "stadium.reload") {
       // Async: read stadium and ask the room script to load it next tick by refreshing config.
       // For simplicity: reload by evaluating a small snippet that calls setCustomStadium again.
+      if (!stadiumPath) {
+        log.warn("Stadium reload requested but no STADIUM_PATH configured.");
+        return;
+      }
       (async () => {
         try {
           const s = await loadStadiumJsonString(stadiumPath);
@@ -125,9 +135,10 @@ export async function startHost({ onReady }) {
       (async () => {
         try {
           const result = auth.login(db, playerName, password);
-          await page.evaluate((id, text, color) => {
+          await page.evaluate((id, text, color, success) => {
             window.__HB_ROOM__?.sendAnnouncement(text, id, color, "small", 1);
-          }, playerId, result.message, result.success ? 0x66ff66 : 0xff4444);
+            if (success) window.__HB_STATE__?.loggedInIds?.add(id);
+          }, playerId, result.message, result.success ? 0x66ff66 : 0xff4444, !!result.success);
         } catch (e) {
           log.error(`Auth login error: ${e?.message || e}`);
         }
@@ -172,34 +183,6 @@ export async function startHost({ onReady }) {
           log.error(`Auth profile error: ${e?.message || e}`);
         }
       })();
-    } else if (msg.type === "player.logIp") {
-      const { playerName, ip, auth } = msg.payload || {};
-      try {
-        db.logPlayerIp(config.room.name, playerName, ip, auth);
-      } catch (e) {
-        log.error(`logPlayerIp failed: ${e?.message || e}`);
-      }
-    } else if (msg.type === "ban.add") {
-      const { ip, playerName, bannedBy, reason } = msg.payload || {};
-      try {
-        db.addBannedIp(ip, playerName, bannedBy, reason);
-      } catch (e) {
-        log.error(`addBannedIp failed: ${e?.message || e}`);
-      }
-    } else if (msg.type === "ban.remove") {
-      const { ip, requesterId } = msg.payload || {};
-      (async () => {
-        try {
-          db.removeBannedIp(ip);
-          if (requesterId != null) {
-            await page.evaluate((id, t) => {
-              window.__HB_ROOM__?.sendAnnouncement(t, id, 0x66ff66, "small", 1);
-            }, requesterId, "IP ban kaldirildi: " + ip);
-          }
-        } catch (e) {
-          log.error(`removeBannedIp failed: ${e?.message || e}`);
-        }
-      })();
     } else if (msg.type === "record.update") {
       const { playerName, seconds } = msg.payload || {};
       try {
@@ -207,6 +190,28 @@ export async function startHost({ onReady }) {
       } catch (e) {
         log.error(`Record update failed: ${e?.message || e}`);
       }
+    } else if (msg.type === "record.updatePersonal") {
+      const { playerName, seconds } = msg.payload || {};
+      try {
+        db.setPersonalRecord(config.room.name, playerName, seconds);
+      } catch (e) {
+        log.error(`Personal record update failed: ${e?.message || e}`);
+      }
+    } else if (msg.type === "record.getPersonal") {
+      const { playerId, playerName } = msg.payload || {};
+      (async () => {
+        try {
+          const row = db.getPersonalRecord(config.room.name, playerName);
+          const text = row && row.best_seconds > 0
+            ? "Senin rekorun: " + row.best_seconds + " sn  (" + row.achieved_at + ")"
+            : "Henuz kayitli rekorun yok. Topu bottan uzak tut!";
+          await page.evaluate((id, t) => {
+            window.__HB_ROOM__?.sendAnnouncement(t, id, 0xdddddd, "small", 1);
+          }, playerId, text);
+        } catch (e) {
+          log.error(`Personal record get failed: ${e?.message || e}`);
+        }
+      })();
     } else if (msg.type === "room.statusUpdate") {
       const p = msg.payload || {};
       try {
@@ -233,6 +238,9 @@ export async function startHost({ onReady }) {
     "injected/state.js",
     "injected/perception.js",
     "injected/decision.js",
+    "injected/proDecision.js",
+    "injected/nnDecision.js",
+    "injected/treeBotDecision.js",
     "injected/botMemory.js",
     "injected/receivePass.js",
     "injected/commands.js",
@@ -259,28 +267,33 @@ export async function startHost({ onReady }) {
     log.warn(`Could not load record: ${e?.message || e}`);
   }
 
-  // Load banned IPs
-  let bannedIpsList = [];
-  try {
-    bannedIpsList = db.listBannedIps().map((b) => b.ip);
-  } catch (e) {
-    log.warn(`Could not load banned IPs: ${e?.message || e}`);
+  // Optional: load NN weights JSON for DECISION_PROFILE=nn
+  let nnWeights = null;
+  if (config.nn?.weightsPath) {
+    const weightsAbs = path.resolve(process.cwd(), config.nn.weightsPath);
+    try {
+      const raw = await fs.readFile(weightsAbs, "utf8");
+      nnWeights = JSON.parse(raw);
+      log.info(`Loaded NN weights: ${weightsAbs}`);
+    } catch (e) {
+      log.error(`Failed to load NN weights: ${weightsAbs} — ${e?.message || e}`);
+    }
   }
 
   await page.evaluate(
-    (cfg, stadiumJson, record, bannedIps) => {
+    (cfg, stadiumJson, record, weights) => {
       window.__HB_CONFIG__ = cfg;
       if (stadiumJson) {
         window.__HB_CONFIG__.stadium = window.__HB_CONFIG__.stadium || {};
         window.__HB_CONFIG__.stadium.jsonString = stadiumJson;
       }
       window.__HB_CONFIG__.initialRecord = record;
-      window.__HB_CONFIG__.bannedIps = bannedIps || [];
+      if (weights) window.__HB_NN_WEIGHTS__ = weights;
     },
     config,
     stadiumJsonString,
     existingRecord,
-    bannedIpsList
+    nnWeights
   );
 
   await page.evaluate(injected);

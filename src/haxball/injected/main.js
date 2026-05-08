@@ -55,6 +55,76 @@
 
   // ── Squares mode helpers ────────────────────────────────
 
+  // Stadium default ball props (3squares.hbs disc[0..2])
+  const COURT_DEFAULT_DISC = { radius: 6.4, bCoef: 0.5, invMass: 1, color: 0xFFFF00 };
+  // prof.hbs disc[0] — bigger, lighter, less bouncy
+  const PROF_BALL_DISC = { radius: 8, bCoef: 0.4, invMass: 1.5, color: 0xFF7F00 };
+  const BALL_BIGGER_STEP = 1.0;
+  const BALL_BIGGER_MAX_USES = 5;
+  const BALL_SPEED_STEP = 0.15;    // invMass delta per step (signed)
+  const BALL_SPEED_MAX = 5;        // |speedCount| upper bound
+
+  function applyCourtBallProps(court) {
+    if (!court) return;
+    let props;
+    if (court.profBall) {
+      props = { ...PROF_BALL_DISC };
+    } else {
+      const bigUses = Math.max(0, Math.min(BALL_BIGGER_MAX_USES, court.biggerCount || 0));
+      const spd = Math.max(-BALL_SPEED_MAX, Math.min(BALL_SPEED_MAX, court.speedCount || 0));
+      props = {
+        ...COURT_DEFAULT_DISC,
+        radius: COURT_DEFAULT_DISC.radius + bigUses * BALL_BIGGER_STEP,
+        invMass: COURT_DEFAULT_DISC.invMass + spd * BALL_SPEED_STEP,
+      };
+    }
+    try { room.setDiscProperties(court.discIndex, props); } catch {}
+  }
+
+  function resetCourtBall(court) {
+    if (!court) return;
+    court.biggerCount = 0;
+    court.speedCount = 0;
+    court.profBall = false;
+    applyCourtBallProps(court);
+  }
+
+  function adjustCourtBigger(court, delta) {
+    if (!court) return false;
+    const cur = court.biggerCount || 0;
+    const next = cur + delta;
+    if (next < 0 || next > BALL_BIGGER_MAX_USES) return false;
+    court.profBall = false;
+    court.biggerCount = next;
+    applyCourtBallProps(court);
+    return true;
+  }
+
+  function adjustCourtSpeed(court, delta) {
+    if (!court) return false;
+    const cur = court.speedCount || 0;
+    const next = cur + delta;
+    if (next > BALL_SPEED_MAX || next < -BALL_SPEED_MAX) return false;
+    court.profBall = false;
+    court.speedCount = next;
+    applyCourtBallProps(court);
+    return true;
+  }
+
+  // Toggle prof ball. Returns the new profBall state (true = prof, false = default).
+  function toggleCourtProfBall(court) {
+    if (!court) return false;
+    if (court.profBall) {
+      court.profBall = false;
+    } else {
+      court.profBall = true;
+      court.biggerCount = 0;
+      court.speedCount = 0;
+    }
+    applyCourtBallProps(court);
+    return court.profBall;
+  }
+
   function getCourtByBotName(botName) {
     if (!state.courts) return null;
     const names = cfg.bots?.names || [];
@@ -87,6 +157,7 @@
       court.humanId = null;
       court.counterTicks = 0;
       court.lastAnnouncedSec = 0;
+      resetCourtBall(court);
     }
   }
 
@@ -157,26 +228,45 @@
       const BOT_TOUCH_THRESHOLD_SQ = 28 * 28;
       if (distSq < BOT_TOUCH_THRESHOLD_SQ) {
         const elapsedSec = Math.floor(court.counterTicks / 60);
-        if (elapsedSec >= 5) {
+        if (elapsedSec >= 10) {
           room.sendAnnouncement("Sifirlandi! Bot topa dokundu. Suren: " + elapsedSec + " sn", court.humanId, 0xff8866, "small", 1);
         }
-        // Check for new record
-        if (elapsedSec > (state.record?.seconds ?? 0)) {
-          const holder = room.getPlayer(court.humanId);
-          if (holder) {
-            state.record = { name: holder.name, seconds: elapsedSec };
-            broadcast(room, "Yeni rekor: " + elapsedSec + " sn - " + holder.name);
-            window.__HB_BRIDGE__?.post("record.update", { playerName: holder.name, seconds: elapsedSec });
-          }
+        const holder = room.getPlayer(court.humanId);
+        // Check for new global record
+        if (holder && elapsedSec > (state.record?.seconds ?? 0)) {
+          state.record = { name: holder.name, seconds: elapsedSec };
+          broadcast(room, "Yeni rekor: " + elapsedSec + " sn - " + holder.name);
+          window.__HB_BRIDGE__?.post("record.update", { playerName: holder.name, seconds: elapsedSec });
+        }
+        // Personal record (logged-in players only) — DB upsert handles "only if better"
+        if (holder && elapsedSec >= 5 && state.loggedInIds?.has(holder.id)) {
+          window.__HB_BRIDGE__?.post("record.updatePersonal", { playerName: holder.name, seconds: elapsedSec });
         }
         court.counterTicks = 0;
         court.lastAnnouncedSec = 0;
+        court.stationaryTicks = 0;
+        court.stationaryWarned = false;
       } else {
-        court.counterTicks++;
-        const currentSec = Math.floor(court.counterTicks / 60);
-        if (currentSec > 0 && currentSec % 5 === 0 && currentSec !== court.lastAnnouncedSec) {
-          room.sendAnnouncement("Sure: " + currentSec + " sn", court.humanId, 0x66ff66, "small", 1);
-          court.lastAnnouncedSec = currentSec;
+        // Pause counter while ball is stationary (e.g. wedged in a corner)
+        const STATIONARY_THRESHOLD = 0.1; // ball speed (manhattan) below this = stationary
+        const STATIONARY_WARN_TICKS = 5 * 60; // 5 seconds at 60 ticks/sec
+        const ballSpeed = Math.abs(court.ballVel.x) + Math.abs(court.ballVel.y);
+
+        if (ballSpeed < STATIONARY_THRESHOLD) {
+          court.stationaryTicks++;
+          if (court.stationaryTicks >= STATIONARY_WARN_TICKS && !court.stationaryWarned) {
+            room.sendAnnouncement("Kosede bekleme cakkal, sayac durdu haberin olsun", court.humanId, 0xff8866, "small", 1);
+            court.stationaryWarned = true;
+          }
+        } else {
+          court.stationaryTicks = 0;
+          court.stationaryWarned = false;
+          court.counterTicks++;
+          const currentSec = Math.floor(court.counterTicks / 60);
+          if (currentSec > 0 && currentSec % 5 === 0 && currentSec !== court.lastAnnouncedSec) {
+            room.sendAnnouncement("Sure: " + currentSec + " sn", court.humanId, 0x66ff66, "small", 1);
+            court.lastAnnouncedSec = currentSec;
+          }
         }
       }
 
@@ -402,8 +492,164 @@
 
   // ── AI tick ─────────────────────────────────────────────
 
+  const decisionProfile = cfg.bots?.decisionProfile || "simple";
+  const isProProfile    = decisionProfile === "pro";
+  const isNnProfile     = decisionProfile === "nn";
+  const isProBotProfile = decisionProfile === "probot";
+
+  function aiTickPro() {
+    const proApi = window.__HB_PRO_DECISION__;
+    if (!proApi) return;
+    const scores = room.getScores();
+    if (!scores) return;
+
+    const ball = getBall(room);
+    state.ballVel = estimateBallVel(state.lastBall, ball);
+    state.lastBall = ball;
+
+    const players = getPlayersWithDisc(room);
+    const botPlayer = players.find((x) => x.isBot && x.p.team === botTeam);
+    if (!botPlayer?.disc || !ball) return;
+
+    // Opponent in 1v1 = the active human (or any non-bot trainee)
+    const oppPlayer = players.find((x) => !x.isBot && x.disc && x.p.team === traineeTeam);
+    const opponent = oppPlayer?.disc || null;
+
+    const intent = proApi.proIntent(
+      { ball, ballVel: state.ballVel, bot: botPlayer.disc, opponent, botTeam },
+      state.tick
+    );
+
+    postBotControl(botPlayer.p.name, {
+      moveX: intent.ax,
+      moveY: intent.ay,
+      kick: intent.kick,
+      kickPower: intent.kickPower,
+    });
+
+    if (state.debug && canLogTick()) {
+      window.__HB_BRIDGE__?.post("debug.tick", {
+        tick: state.tick,
+        matchState: state.matchState,
+        bot: botPlayer.p.name,
+        proState: intent.debugState,
+        ax: intent.ax, ay: intent.ay, kick: intent.kick,
+      });
+    }
+  }
+
+  function aiTickNN() {
+    const nnApi = window.__HB_NN_DECISION__;
+    if (!nnApi) return;
+    const scores = room.getScores();
+    if (!scores) return;
+
+    const ball = getBall(room);
+    state.ballVel = estimateBallVel(state.lastBall, ball);
+    state.lastBall = ball;
+    if (!ball) return;
+
+    const players = getPlayersWithDisc(room);
+    const botPlayer = players.find((x) => x.isBot && x.p.team === botTeam);
+    if (!botPlayer?.disc) return;
+
+    const oppPlayer = players.find((x) => !x.isBot && x.disc && x.p.team === traineeTeam);
+    if (!oppPlayer?.disc) {
+      // No opponent yet — idle
+      postBotControl(botPlayer.p.name, { moveX: 0, moveY: 0, kick: false, kickPower: 0 });
+      return;
+    }
+
+    // Velocities: prefer Haxball-provided xspeed/yspeed; fall back to estimateBallVel for ball.
+    const botVel = { x: botPlayer.disc.xspeed || 0, y: botPlayer.disc.yspeed || 0 };
+    const oppVel = { x: oppPlayer.disc.xspeed || 0, y: oppPlayer.disc.yspeed || 0 };
+    const ballVel = (typeof ball.xspeed === "number")
+      ? { x: ball.xspeed, y: ball.yspeed }
+      : state.ballVel;
+
+    const intent = nnApi.nnIntent(
+      {
+        ball, ballVel,
+        bot: botPlayer.disc, botVel,
+        opponent: oppPlayer.disc, oppVel,
+        botTeam,
+      },
+      state.tick
+    );
+
+    postBotControl(botPlayer.p.name, {
+      moveX: intent.ax,
+      moveY: intent.ay,
+      kick: intent.kick,
+      kickPower: intent.kickPower,
+    });
+
+    if (state.debug && canLogTick()) {
+      window.__HB_BRIDGE__?.post("debug.tick", {
+        tick: state.tick,
+        matchState: state.matchState,
+        bot: botPlayer.p.name,
+        nnState: intent.debugState,
+        ax: intent.ax, ay: intent.ay, kick: intent.kick,
+      });
+    }
+  }
+
+  function aiTickProBot() {
+    const treeApi = window.__HB_TREEBOT_DECISION__;
+    if (!treeApi) return;
+    const scores = room.getScores();
+    if (!scores) return;
+
+    const ball = getBall(room);
+    state.ballVel = estimateBallVel(state.lastBall, ball);
+    state.lastBall = ball;
+    if (!ball) return;
+
+    const players = getPlayersWithDisc(room);
+    const botPlayer = players.find((x) => x.isBot && x.p.team === botTeam);
+    if (!botPlayer?.disc) return;
+
+    const oppPlayer = players.find((x) => !x.isBot && x.disc && x.p.team === traineeTeam);
+    if (!oppPlayer?.disc) {
+      postBotControl(botPlayer.p.name, { moveX: 0, moveY: 0, kick: false, kickPower: 0 });
+      return;
+    }
+
+    const intent = treeApi.treeBotIntent(
+      {
+        ball,
+        ballVel: state.ballVel,
+        bot: botPlayer.disc,
+        opponent: oppPlayer.disc,
+        botTeam,
+      },
+      state.tick
+    );
+
+    postBotControl(botPlayer.p.name, {
+      moveX: intent.ax,
+      moveY: intent.ay,
+      kick: intent.kick,
+      kickPower: intent.kickPower,
+    });
+
+    if (state.debug && canLogTick()) {
+      window.__HB_BRIDGE__?.post("debug.tick", {
+        tick: state.tick,
+        matchState: state.matchState,
+        bot: botPlayer.p.name,
+        treeState: intent.debugState,
+        ax: intent.ax, ay: intent.ay, kick: intent.kick,
+      });
+    }
+  }
+
   function aiTick() {
     if (state.pausedBot) return;
+    if (isProProfile)    return aiTickPro();
+    if (isNnProfile)     return aiTickNN();
+    if (isProBotProfile) return aiTickProBot();
     const scores = room.getScores();
     if (!scores) return;
 
@@ -450,17 +696,6 @@
     applyStadium();
   };
 
-  function decodeConn(connHex) {
-    try {
-      if (!connHex) return "";
-      let s = "";
-      for (let i = 0; i < connHex.length; i += 2) {
-        s += String.fromCharCode(parseInt(connHex.substr(i, 2), 16));
-      }
-      return s;
-    } catch { return ""; }
-  }
-
   room.onPlayerJoin = function (player) {
     window.__HB_BRIDGE__?.post("room.playerJoin", { id: player.id, name: player.name, team: player.team });
 
@@ -469,20 +704,9 @@
       room.setPlayerAvatar(player.id, "🦇");
     }
 
-    // ── IP ban check + logging (humans only) ──────────
-    if (!isBotPlayer(player)) {
-      const ip = decodeConn(player.conn);
-      if (ip && state.bannedIps?.has(ip)) {
-        try { room.kickPlayer(player.id, "IP banned", false); } catch {}
-        return;
-      }
-      // Capture auth — only available here, not from room.getPlayer() later
-      if (player.auth) state.playerAuths.set(player.id, player.auth);
-      window.__HB_BRIDGE__?.post("player.logIp", {
-        playerName: player.name,
-        ip,
-        auth: player.auth || "",
-      });
+    // ── Capture auth (humans only) — only available here, not from room.getPlayer() later
+    if (!isBotPlayer(player) && player.auth) {
+      state.playerAuths.set(player.id, player.auth);
     }
 
     // ── Squares mode ──────────────────────────────────
@@ -582,6 +806,7 @@
     state.queuedHumanIds = state.queuedHumanIds.filter((id) => id !== player.id);
     state.afkIds = state.afkIds.filter((id) => id !== player.id);
     state.playerAuths?.delete(player.id);
+    state.loggedInIds?.delete(player.id);
 
     // ── Squares mode ──────────────────────────────────
     if (isSquaresMode) {
@@ -595,6 +820,7 @@
         court.humanId = null;
         court.counterTicks = 0;
         court.lastAnnouncedSec = 0;
+        resetCourtBall(court);
         broadcast(room, player.name + " ayrildi (" + court.name + " kare bos).");
         // Promote queued player into freed court
         while (state.queuedHumanIds.length > 0) {
@@ -667,12 +893,27 @@
     transitionTo("PLAYING");
     state.matchScore = { red: 0, blue: 0 };
     ensureTeams();
+    if (isProProfile)    window.__HB_PRO_DECISION__?.resetProMemory(state.tick);
+    if (isNnProfile)     window.__HB_NN_DECISION__?.resetNnMemory();
+    if (isProBotProfile) window.__HB_TREEBOT_DECISION__?.resetTreeBotMemory();
 
     if (isSquaresMode) {
       room.setScoreLimit(0);
       room.setTimeLimit(0);
       // Teleport everyone to their courts after a short delay for disc init
       setTimeout(() => teleportToCourts(), 150);
+      // Neutralize the spurious "ballPhysics" disc 0 (black dot at center):
+      // keep at (0,0) so camera doesn't pan, but make it invisible and immovable.
+      setTimeout(() => {
+        try {
+          room.setDiscProperties(0, {
+            x: 0, y: 0,
+            xspeed: 0, yspeed: 0,
+            radius: 0,
+            invMass: 0,
+          });
+        } catch {}
+      }, 200);
       broadcast(room, "Antrenman basladi!");
     } else {
       room.setScoreLimit(state.scoreLimit);
@@ -757,6 +998,9 @@
   room.onPositionsReset = function () {
     state.lastBall = null;
     state.ballVel = { x: 0, y: 0 };
+    if (isProProfile)    window.__HB_PRO_DECISION__?.resetProMemory(state.tick);
+    if (isNnProfile)     window.__HB_NN_DECISION__?.resetNnMemory();
+    if (isProBotProfile) window.__HB_TREEBOT_DECISION__?.resetTreeBotMemory();
     window.__HB_BRIDGE__?.post("room.positionsReset", {});
 
     // After a goal, positions reset and game continues
@@ -798,5 +1042,11 @@
     assignHumanToCourt,
     squaresHasHumans,
     squaresStartGameIfReady,
+    resetCourtBall,
+    adjustCourtBigger,
+    adjustCourtSpeed,
+    toggleCourtProfBall,
+    BALL_BIGGER_MAX_USES,
+    BALL_SPEED_MAX,
   };
 })();

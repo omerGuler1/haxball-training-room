@@ -23,6 +23,7 @@ const DEFAULTS = {
     avatarPrefix: "🤖",
     launchDelayMs: 2500,
     userAgent: null,
+    decisionProfile: "simple", // "simple" (default chase-and-kick) | "pro" (1v1 strategic)
   },
   training: {
     autoStart: true,
@@ -43,6 +44,9 @@ const DEFAULTS = {
   },
   db: {
     path: "./data/haxball.db",
+  },
+  nn: {
+    weightsPath: null, // optional, for DECISION_PROFILE=nn
   },
   discord: {
     token: "",
@@ -113,6 +117,8 @@ export function loadConfig() {
   cfg.bots.avatarPrefix = process.env.BOT_AVATAR_PREFIX ?? cfg.bots.avatarPrefix;
   cfg.bots.launchDelayMs = parseIntSafe(process.env.BOT_LAUNCH_DELAY_MS, cfg.bots.launchDelayMs);
   cfg.bots.userAgent = process.env.BOT_USER_AGENT || cfg.bots.userAgent;
+  cfg.bots.decisionProfile = process.env.DECISION_PROFILE ?? cfg.bots.decisionProfile;
+  cfg.nn.weightsPath = process.env.NN_WEIGHTS_PATH ?? cfg.nn.weightsPath;
 
   cfg.db.path = process.env.DB_PATH ?? cfg.db.path;
   cfg.discord.token = process.env.DISCORD_TOKEN ?? cfg.discord.token;

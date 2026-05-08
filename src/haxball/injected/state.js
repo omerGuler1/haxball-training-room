@@ -39,18 +39,18 @@
     ? { name: String(ir.name || ""), seconds: Number(ir.seconds) || 0 }
     : { name: "", seconds: 0 };
 
-  // ── Banned IPs (runtime set, synced from DB) ──────────
-  state.bannedIps = new Set(Array.isArray(cfg.bannedIps) ? cfg.bannedIps : []);
-
   // ── Player auths captured on join (id → auth string) ──
   state.playerAuths = new Map();
+
+  // ── Logged-in player ids (set on successful !giris) ──
+  state.loggedInIds = new Set();
 
   // ── Squares mode: court definitions ──────────────────
   if (state.matchMode === "squares") {
     state.courts = [
-      { index: 0, name: "Sol",  centerX: -420, minX: -620, maxX: -220, discIndex: 1, botSpawnX: -540, humanSpawnX: -300, botId: null, humanId: null, lastBall: null, ballVel: { x: 0, y: 0 }, counterTicks: 0, lastAnnouncedSec: 0 },
-      { index: 1, name: "Orta", centerX: 0,    minX: -200, maxX: 200,  discIndex: 2, botSpawnX: -100, humanSpawnX: 100,  botId: null, humanId: null, lastBall: null, ballVel: { x: 0, y: 0 }, counterTicks: 0, lastAnnouncedSec: 0 },
-      { index: 2, name: "Sag",  centerX: 420,  minX: 220,  maxX: 620,  discIndex: 3, botSpawnX: 300,  humanSpawnX: 540,  botId: null, humanId: null, lastBall: null, ballVel: { x: 0, y: 0 }, counterTicks: 0, lastAnnouncedSec: 0 },
+      { index: 0, name: "Sol",  centerX: -420, minX: -620, maxX: -220, discIndex: 1, botSpawnX: -540, humanSpawnX: -300, botId: null, humanId: null, lastBall: null, ballVel: { x: 0, y: 0 }, counterTicks: 0, lastAnnouncedSec: 0, stationaryTicks: 0, stationaryWarned: false },
+      { index: 1, name: "Orta", centerX: 0,    minX: -200, maxX: 200,  discIndex: 2, botSpawnX: -100, humanSpawnX: 100,  botId: null, humanId: null, lastBall: null, ballVel: { x: 0, y: 0 }, counterTicks: 0, lastAnnouncedSec: 0, stationaryTicks: 0, stationaryWarned: false },
+      { index: 2, name: "Sag",  centerX: 420,  minX: 220,  maxX: 620,  discIndex: 3, botSpawnX: 300,  humanSpawnX: 540,  botId: null, humanId: null, lastBall: null, ballVel: { x: 0, y: 0 }, counterTicks: 0, lastAnnouncedSec: 0, stationaryTicks: 0, stationaryWarned: false },
     ];
     // Player assignment order: center first, then left, then right
     state.courtJoinOrder = [1, 0, 2];

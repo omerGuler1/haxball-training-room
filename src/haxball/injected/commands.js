@@ -22,17 +22,6 @@
     return isAdmin(player);
   }
 
-  function decodeConnHex(connHex) {
-    try {
-      if (!connHex) return "";
-      let s = "";
-      for (let i = 0; i < connHex.length; i += 2) {
-        s += String.fromCharCode(parseInt(connHex.substr(i, 2), 16));
-      }
-      return s;
-    } catch { return ""; }
-  }
-
   function reply(room, id, msg) {
     room.sendAnnouncement(msg, id, 0xdddddd, "small", 1);
   }
@@ -106,6 +95,7 @@
           court.humanId = null;
           court.counterTicks = 0;
           court.lastAnnouncedSec = 0;
+          lifecycle.resetCourtBall?.(court);
           // Find next queued non-AFK player
           while (state.queuedHumanIds.length > 0) {
             const nextId = state.queuedHumanIds.shift();
@@ -164,7 +154,7 @@
       reply(
         room,
         player.id,
-        "Commands: !help !kayit !giris !bagla !profil !afk !rekor !status !players  (admin: !kick !ban !banip !unbanip !start !stop !reset)"
+        "Commands: !help !kayit !giris !bagla !profil !afk !rekor !rekorum !bigger !smaller !faster !slower !ball  (admin: !kick !ban !pausebot !resumebot !botdebug !reloadstadium)"
       );
       return false;
     }
@@ -239,24 +229,86 @@
       return false;
     }
 
-    // !status and !players are info-only, available to everyone
-    if (cmd === "status") {
-      const human = state.activeHumanId ? room.getPlayer(state.activeHumanId) : null;
-      const humanScore = state.matchScore ? (cfg.training?.traineeTeamId === 1 ? state.matchScore.red : state.matchScore.blue) : 0;
-      const botScore = state.matchScore ? (cfg.training?.botTeamId === 1 ? state.matchScore.red : state.matchScore.blue) : 0;
-      reply(
-        room,
-        player.id,
-        "state=" + state.matchState + " score=" + humanScore + "-" + botScore +
-        " player=" + (human ? human.name : "none") +
-        " queue=" + state.queuedHumanIds.length
-      );
+    // !bigger / !smaller — squares mode: tune own court's ball size (range 0..5, resets on leave)
+    if (cmd === "bigger" || cmd === "smaller") {
+      const lifecycle = window.__HB_LIFECYCLE__;
+      if (!lifecycle?.isSquaresMode) {
+        reply(room, player.id, "Bu komut sadece squares modunda kullanilabilir.");
+        return false;
+      }
+      const court = lifecycle.getCourtByHumanId(player.id);
+      if (!court) {
+        reply(room, player.id, "Bir karede degilsin.");
+        return false;
+      }
+      const max = lifecycle.BALL_BIGGER_MAX_USES ?? 5;
+      const delta = cmd === "bigger" ? +1 : -1;
+      if (!lifecycle.adjustCourtBigger(court, delta)) {
+        reply(room, player.id, cmd === "bigger"
+          ? "Maksimum buyutme limitine ulastin (" + max + "/" + max + ")."
+          : "Top zaten default boyutta, daha kucultulemiyor.");
+        return false;
+      }
+      const verb = cmd === "bigger" ? "buyuttu" : "kuculttu";
+      broadcast(room, player.name + " topu " + verb + " (" + court.name + " kare, " + court.biggerCount + "/" + max + ").");
       return false;
     }
-    if (cmd === "players" || cmd === "list") {
-      const list = room.getPlayerList().filter((p) => p.id !== 0);
-      const text = list.map((p) => "#" + p.id + " " + p.name + (p.team === 0 ? " (spec)" : "")).join(", ");
-      reply(room, player.id, text || "(empty)");
+
+    // !faster / !slower — squares mode: tune own court's default ball speed (range -5..+5, resets on leave)
+    if (cmd === "faster" || cmd === "slower") {
+      const lifecycle = window.__HB_LIFECYCLE__;
+      if (!lifecycle?.isSquaresMode) {
+        reply(room, player.id, "Bu komut sadece squares modunda kullanilabilir.");
+        return false;
+      }
+      const court = lifecycle.getCourtByHumanId(player.id);
+      if (!court) {
+        reply(room, player.id, "Bir karede degilsin.");
+        return false;
+      }
+      const max = lifecycle.BALL_SPEED_MAX ?? 5;
+      const delta = cmd === "faster" ? +1 : -1;
+      if (!lifecycle.adjustCourtSpeed(court, delta)) {
+        reply(room, player.id, cmd === "faster"
+          ? "Maksimum hiz limitine ulastin (+" + max + ")."
+          : "Minimum hiz limitine ulastin (-" + max + ").");
+        return false;
+      }
+      const verb = cmd === "faster" ? "hizlandirdi" : "yavaslatti";
+      const lvl = court.speedCount > 0 ? "+" + court.speedCount : String(court.speedCount);
+      broadcast(room, player.name + " topu " + verb + " (" + court.name + " kare, " + lvl + ").");
+      return false;
+    }
+
+    // !ball — squares mode: toggle own court's ball between default and prof (resets on leave)
+    if (cmd === "ball") {
+      const lifecycle = window.__HB_LIFECYCLE__;
+      if (!lifecycle?.isSquaresMode) {
+        reply(room, player.id, "Bu komut sadece squares modunda kullanilabilir.");
+        return false;
+      }
+      const court = lifecycle.getCourtByHumanId(player.id);
+      if (!court) {
+        reply(room, player.id, "Bir karede degilsin.");
+        return false;
+      }
+      const isProf = lifecycle.toggleCourtProfBall(court);
+      broadcast(room, isProf
+        ? player.name + " prof topuna gecti (" + court.name + " kare)."
+        : player.name + " default topa dondu (" + court.name + " kare).");
+      return false;
+    }
+
+    // !rekorum — personal best, requires login
+    if (cmd === "rekorum") {
+      if (!state.loggedInIds?.has(player.id)) {
+        reply(room, player.id, "Once giris yap: !giris <sifre>  (kayitli degilsen: !kayit <sifre>)");
+        return false;
+      }
+      window.__HB_BRIDGE__?.post("record.getPersonal", {
+        playerId: player.id,
+        playerName: player.name,
+      });
       return false;
     }
 
@@ -282,42 +334,7 @@
       return false;
     }
 
-    if (cmd === "banip") {
-      const arg = (rest[0] || "").trim();
-      if (!arg) { reply(room, player.id, "Kullanim: !banip <id veya isim>"); return false; }
-      const list = room.getPlayerList().filter((p) => p.id !== 0);
-      const numId = Number(arg);
-      let target = Number.isFinite(numId) ? list.find((p) => p.id === numId) : null;
-      if (!target) target = list.find((p) => p.name.toLowerCase() === arg.toLowerCase());
-      if (!target) target = list.find((p) => p.name.toLowerCase().includes(arg.toLowerCase()));
-      if (!target) { reply(room, player.id, "Oyuncu bulunamadi: " + arg); return false; }
-      const ip = decodeConnHex(target.conn);
-      if (!ip) { reply(room, player.id, "IP cozulemedi."); return false; }
-      state.bannedIps = state.bannedIps || new Set();
-      state.bannedIps.add(ip);
-      window.__HB_BRIDGE__?.post("ban.add", {
-        ip,
-        playerName: target.name,
-        bannedBy: player.name,
-        reason: rest.slice(1).join(" ") || "",
-      });
-      try { room.kickPlayer(target.id, "IP banned by " + player.name, true); } catch {}
-      reply(room, player.id, "IP banlandi: " + ip + " (" + target.name + ")");
-      return false;
-    }
-
-    if (cmd === "unbanip") {
-      const ip = (rest[0] || "").trim();
-      if (!ip) { reply(room, player.id, "Kullanim: !unbanip <ip>"); return false; }
-      if (state.bannedIps) state.bannedIps.delete(ip);
-      window.__HB_BRIDGE__?.post("ban.remove", { ip, requesterId: player.id });
-      return false;
-    }
-
-    if (cmd === "start") room.startGame();
-    else if (cmd === "stop") room.stopGame();
-    else if (cmd === "reset") room.stopGame(), setTimeout(() => room.startGame(), 250);
-    else if (cmd === "pausebot") (state.pausedBot = true), broadcast(room, "Bot paused.");
+    if (cmd === "pausebot") (state.pausedBot = true), broadcast(room, "Bot paused.");
     else if (cmd === "resumebot") (state.pausedBot = false), broadcast(room, "Bot resumed.");
     else if (cmd === "botdebug") {
       const v = (rest[0] || "").toLowerCase();

@@ -3,8 +3,11 @@ import { openDatabase } from "../db/database.js";
 import * as auth from "../db/auth.js";
 
 export function startDiscordBot(config) {
+  console.log("[discord] startDiscordBot: opening database at", config.db.path);
   const db = openDatabase(config.db.path);
+  console.log("[discord] startDiscordBot: database opened, creating Client");
   const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+  console.log("[discord] startDiscordBot: Client created");
 
   client.once("ready", async () => {
     console.log(`Discord bot logged in as ${client.user.tag}`);
@@ -129,7 +132,19 @@ export function startDiscordBot(config) {
     }
   });
 
-  client.login(config.discord.token);
+  client.on("error", (err) => console.error("Discord client error:", err?.message || err));
+  client.on("warn", (msg) => console.warn("Discord client warn:", msg));
+  client.on("shardError", (err) => console.error("Discord shard error:", err?.message || err));
+
+  const tokenPreview = config.discord.token
+    ? `${config.discord.token.slice(0, 8)}…${config.discord.token.slice(-4)} (len=${config.discord.token.length})`
+    : "(empty)";
+  console.log(`Logging in to Discord with token ${tokenPreview}, guildId=${config.discord.guildId}`);
+
+  client.login(config.discord.token).catch((err) => {
+    console.error("Discord login failed:", err?.message || err);
+    process.exit(1);
+  });
 
   return {
     shutdown: () => {

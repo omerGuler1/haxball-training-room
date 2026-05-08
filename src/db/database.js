@@ -19,28 +19,19 @@ CREATE TABLE IF NOT EXISTS link_codes (
   created_at TEXT DEFAULT (datetime('now'))
 );
 
-CREATE TABLE IF NOT EXISTS player_ips (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  room_name TEXT,
-  player_name TEXT,
-  ip TEXT,
-  auth TEXT,
-  seen_at TEXT DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS banned_ips (
-  ip TEXT PRIMARY KEY,
-  player_name TEXT,
-  banned_by TEXT,
-  reason TEXT,
-  banned_at TEXT DEFAULT (datetime('now'))
-);
-
 CREATE TABLE IF NOT EXISTS room_records (
   room_name TEXT PRIMARY KEY,
   player_name TEXT NOT NULL,
   seconds INTEGER NOT NULL,
   achieved_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS player_records (
+  room_name TEXT NOT NULL,
+  player_name TEXT NOT NULL COLLATE NOCASE,
+  best_seconds INTEGER NOT NULL,
+  achieved_at TEXT DEFAULT (datetime('now')),
+  PRIMARY KEY (room_name, player_name)
 );
 
 CREATE TABLE IF NOT EXISTS room_status (
@@ -108,42 +99,6 @@ export function openDatabase(dbPath) {
       return row || null;
     },
 
-    // ── Player IPs & Bans ───────────────────────────
-
-    logPlayerIp(roomName, playerName, ip, auth) {
-      return db.prepare("INSERT INTO player_ips (room_name, player_name, ip, auth) VALUES (?, ?, ?, ?)").run(roomName, playerName, ip || "", auth || "");
-    },
-
-    getLastIpForPlayer(playerName) {
-      return db.prepare("SELECT * FROM player_ips WHERE player_name = ? ORDER BY id DESC LIMIT 1").get(playerName);
-    },
-
-    isIpBanned(ip) {
-      if (!ip) return false;
-      const row = db.prepare("SELECT 1 FROM banned_ips WHERE ip = ?").get(ip);
-      return !!row;
-    },
-
-    addBannedIp(ip, playerName, bannedBy, reason) {
-      return db.prepare(`
-        INSERT INTO banned_ips (ip, player_name, banned_by, reason, banned_at)
-        VALUES (?, ?, ?, ?, datetime('now'))
-        ON CONFLICT(ip) DO UPDATE SET
-          player_name = excluded.player_name,
-          banned_by = excluded.banned_by,
-          reason = excluded.reason,
-          banned_at = datetime('now')
-      `).run(ip, playerName || "", bannedBy || "", reason || "");
-    },
-
-    removeBannedIp(ip) {
-      return db.prepare("DELETE FROM banned_ips WHERE ip = ?").run(ip);
-    },
-
-    listBannedIps() {
-      return db.prepare("SELECT * FROM banned_ips ORDER BY banned_at DESC").all();
-    },
-
     // ── Room Records ─────────────────────────────────
 
     getRecord(roomName) {
@@ -158,6 +113,26 @@ export function openDatabase(dbPath) {
           player_name = excluded.player_name,
           seconds = excluded.seconds,
           achieved_at = datetime('now')
+      `).run(roomName, playerName, seconds);
+    },
+
+    // ── Per-player records ──────────────────────────
+
+    getPersonalRecord(roomName, playerName) {
+      return db.prepare(
+        "SELECT * FROM player_records WHERE room_name = ? AND player_name = ?"
+      ).get(roomName, playerName);
+    },
+
+    setPersonalRecord(roomName, playerName, seconds) {
+      // Upsert: only update if new seconds is strictly better than existing
+      return db.prepare(`
+        INSERT INTO player_records (room_name, player_name, best_seconds, achieved_at)
+        VALUES (?, ?, ?, datetime('now'))
+        ON CONFLICT(room_name, player_name) DO UPDATE SET
+          best_seconds = excluded.best_seconds,
+          achieved_at = datetime('now')
+        WHERE excluded.best_seconds > player_records.best_seconds
       `).run(roomName, playerName, seconds);
     },
 

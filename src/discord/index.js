@@ -1,7 +1,10 @@
+console.log("[discord] starting…");
 import { loadConfig } from "../config/index.js";
 import { startDiscordBot } from "./bot.js";
 
+console.log("[discord] modules loaded, calling loadConfig()");
 const config = loadConfig();
+console.log("[discord] config loaded; cwd=", process.cwd(), "db.path=", config.db.path);
 
 if (!config.discord.token) {
   console.error("Missing DISCORD_TOKEN in .env");
@@ -13,7 +16,9 @@ if (!config.discord.guildId) {
   process.exit(1);
 }
 
+console.log("[discord] calling startDiscordBot()");
 const bot = startDiscordBot(config);
+console.log("[discord] startDiscordBot() returned");
 
 process.on("SIGINT", () => {
   bot.shutdown();
