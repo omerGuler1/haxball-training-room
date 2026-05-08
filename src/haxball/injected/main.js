@@ -55,12 +55,16 @@
 
   // ── Squares mode helpers ────────────────────────────────
 
-  // Stadium default ball props (3squares.hbs disc[0..2])
+  // Stadium default ball props (3squares.hbs disc[0..2]) — playerPhysics.kickStrength=7.0
   const COURT_DEFAULT_DISC = { radius: 6.4, bCoef: 0.5, invMass: 1, color: 0xFFFF00 };
-  // prof.hbs disc[0] — bigger, lighter, less bouncy
-  const PROF_BALL_DISC = { radius: 8, bCoef: 0.4, invMass: 1.5, color: 0xFF7F00 };
-  // valn v2 disc[0] — smaller, lighter, soft (lower bCoef)
-  const VALN_BALL_DISC = { radius: 5.8, bCoef: 0.443, invMass: 1.5, color: 0xBEBEBE };
+  // prof.hbs ball + invMass corrected for 3squares kickStrength.
+  // Original prof: kickStr=6.3 × invMass=1.5 = 9.45; 3squares kickStr=7.0
+  //   → match by invMass = 9.45/7.0 = 1.35
+  const PROF_BALL_DISC = { radius: 8, bCoef: 0.4, invMass: 1.35, color: 0xFF7F00 };
+  // valn v2 ball + invMass corrected for 3squares kickStrength.
+  // Original valn: kickStr=4.3 × invMass=1.5 = 6.45; 3squares kickStr=7.0
+  //   → match by invMass = 6.45/7.0 = 0.92
+  const VALN_BALL_DISC = { radius: 5.8, bCoef: 0.443, invMass: 0.92, color: 0xBEBEBE };
   const BALL_MODE_CYCLE = ["default", "prof", "valn"];
   const BALL_BIGGER_STEP = 1.0;
   const BALL_BIGGER_MAX_USES = 5;
