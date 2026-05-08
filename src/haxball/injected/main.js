@@ -59,6 +59,9 @@
   const COURT_DEFAULT_DISC = { radius: 6.4, bCoef: 0.5, invMass: 1, color: 0xFFFF00 };
   // prof.hbs disc[0] — bigger, lighter, less bouncy
   const PROF_BALL_DISC = { radius: 8, bCoef: 0.4, invMass: 1.5, color: 0xFF7F00 };
+  // valn v2 disc[0] — smaller, lighter, soft (lower bCoef)
+  const VALN_BALL_DISC = { radius: 5.8, bCoef: 0.443, invMass: 1.5, color: 0xBEBEBE };
+  const BALL_MODE_CYCLE = ["default", "prof", "valn"];
   const BALL_BIGGER_STEP = 1.0;
   const BALL_BIGGER_MAX_USES = 5;
   const BALL_SPEED_STEP = 0.15;    // invMass delta per step (signed)
@@ -66,9 +69,12 @@
 
   function applyCourtBallProps(court) {
     if (!court) return;
+    const mode = court.ballMode || "default";
     let props;
-    if (court.profBall) {
+    if (mode === "prof") {
       props = { ...PROF_BALL_DISC };
+    } else if (mode === "valn") {
+      props = { ...VALN_BALL_DISC };
     } else {
       const bigUses = Math.max(0, Math.min(BALL_BIGGER_MAX_USES, court.biggerCount || 0));
       const spd = Math.max(-BALL_SPEED_MAX, Math.min(BALL_SPEED_MAX, court.speedCount || 0));
@@ -85,7 +91,7 @@
     if (!court) return;
     court.biggerCount = 0;
     court.speedCount = 0;
-    court.profBall = false;
+    court.ballMode = "default";
     applyCourtBallProps(court);
   }
 
@@ -94,7 +100,7 @@
     const cur = court.biggerCount || 0;
     const next = cur + delta;
     if (next < 0 || next > BALL_BIGGER_MAX_USES) return false;
-    court.profBall = false;
+    court.ballMode = "default";
     court.biggerCount = next;
     applyCourtBallProps(court);
     return true;
@@ -105,24 +111,25 @@
     const cur = court.speedCount || 0;
     const next = cur + delta;
     if (next > BALL_SPEED_MAX || next < -BALL_SPEED_MAX) return false;
-    court.profBall = false;
+    court.ballMode = "default";
     court.speedCount = next;
     applyCourtBallProps(court);
     return true;
   }
 
-  // Toggle prof ball. Returns the new profBall state (true = prof, false = default).
-  function toggleCourtProfBall(court) {
-    if (!court) return false;
-    if (court.profBall) {
-      court.profBall = false;
-    } else {
-      court.profBall = true;
+  // Cycle ball mode: default → prof → valn → default. Returns new mode.
+  function cycleCourtBall(court) {
+    if (!court) return "default";
+    const cur = court.ballMode || "default";
+    const idx = BALL_MODE_CYCLE.indexOf(cur);
+    const next = BALL_MODE_CYCLE[(idx + 1) % BALL_MODE_CYCLE.length];
+    court.ballMode = next;
+    if (next !== "default") {
       court.biggerCount = 0;
       court.speedCount = 0;
     }
     applyCourtBallProps(court);
-    return court.profBall;
+    return next;
   }
 
   function getCourtByBotName(botName) {
@@ -1049,7 +1056,7 @@
     resetCourtBall,
     adjustCourtBigger,
     adjustCourtSpeed,
-    toggleCourtProfBall,
+    cycleCourtBall,
     BALL_BIGGER_MAX_USES,
     BALL_SPEED_MAX,
   };

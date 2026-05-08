@@ -280,7 +280,7 @@
       return false;
     }
 
-    // !ball — squares mode: toggle own court's ball between default and prof (resets on leave)
+    // !ball — squares mode: cycle own court's ball default → prof → valn → default
     if (cmd === "ball") {
       const lifecycle = window.__HB_LIFECYCLE__;
       if (!lifecycle?.isSquaresMode) {
@@ -292,10 +292,12 @@
         reply(room, player.id, "Bir karede degilsin.");
         return false;
       }
-      const isProf = lifecycle.toggleCourtProfBall(court);
-      broadcast(room, isProf
-        ? player.name + " prof topuna gecti (" + court.name + " kare)."
-        : player.name + " default topa dondu (" + court.name + " kare).");
+      const mode = lifecycle.cycleCourtBall(court);
+      const label =
+        mode === "prof" ? "prof topuna gecti" :
+        mode === "valn" ? "valn topuna gecti" :
+        "default topa dondu";
+      broadcast(room, player.name + " " + label + " (" + court.name + " kare).");
       return false;
     }
 
