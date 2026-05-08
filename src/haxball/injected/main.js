@@ -222,13 +222,15 @@
       if (!botPlayer?.disc || !ball) continue;
 
       // ── Counter: bot topa değerse sıfırla ──────────
+      // Dynamic threshold — !bigger ball radius'unu değiştirebiliyor (6.4 → 11.4).
+      // Sabit eşik kullanırsak büyük topta bot'a değse bile algılanmaz.
       const dx = botPlayer.disc.x - ball.x;
       const dy = botPlayer.disc.y - ball.y;
       const distSq = dx * dx + dy * dy;
-      // 22 ≈ player radius (15) + ball radius (6.4) + tiny margin (~0.6).
-      // Was 28 → false positives when bot was close but not actually touching.
-      const BOT_TOUCH_THRESHOLD_SQ = 22 * 22;
-      if (distSq < BOT_TOUCH_THRESHOLD_SQ) {
+      const botR  = botPlayer.disc.radius ?? 15;
+      const ballR = ball.radius ?? 6.4;
+      const touchDist = botR + ballR + 1;   // +1 small margin
+      if (distSq < touchDist * touchDist) {
         const elapsedSec = Math.floor(court.counterTicks / 60);
         if (elapsedSec >= 10) {
           room.sendAnnouncement("Sifirlandi! Bot topa dokundu. Suren: " + elapsedSec + " sn", court.humanId, 0xff8866, "small", 1);
