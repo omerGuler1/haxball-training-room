@@ -225,7 +225,9 @@
       const dx = botPlayer.disc.x - ball.x;
       const dy = botPlayer.disc.y - ball.y;
       const distSq = dx * dx + dy * dy;
-      const BOT_TOUCH_THRESHOLD_SQ = 28 * 28;
+      // 22 ≈ player radius (15) + ball radius (6.4) + tiny margin (~0.6).
+      // Was 28 → false positives when bot was close but not actually touching.
+      const BOT_TOUCH_THRESHOLD_SQ = 22 * 22;
       if (distSq < BOT_TOUCH_THRESHOLD_SQ) {
         const elapsedSec = Math.floor(court.counterTicks / 60);
         if (elapsedSec >= 10) {
