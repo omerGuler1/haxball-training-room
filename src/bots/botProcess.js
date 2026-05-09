@@ -187,9 +187,38 @@ export async function startBot({ roomLink, botName, controlWsUrl, password }) {
     }
   }, 500);
 
+  // Watchdog: bot may silently fall out of the Haxball room (WebRTC drop,
+  // Cloudflare interstitial, renderer crash) while the Node process keeps
+  // running. Re-check periodically; exit non-zero so the orchestrator restarts.
+  let missedChecks = 0;
+  const watchdog = setInterval(async () => {
+    if (!botInGame) return;
+    if (await isInGame()) {
+      missedChecks = 0;
+      return;
+    }
+    missedChecks++;
+    log.warn(`Watchdog: bot not in game (${botName}) [${missedChecks}/2].`);
+    if (missedChecks >= 2) {
+      log.error(`Watchdog: bot lost room (${botName}). Exiting for orchestrator restart.`);
+      process.exit(1);
+    }
+  }, 60_000);
+
+  // Surface browser disconnect immediately — no point waiting for the watchdog tick.
+  browser.on("disconnected", () => {
+    log.error(`Chromium disconnected (${botName}). Exiting for orchestrator restart.`);
+    process.exit(1);
+  });
+  page.on("close", () => {
+    log.error(`Chromium page closed (${botName}). Exiting for orchestrator restart.`);
+    process.exit(1);
+  });
+
   return {
     shutdown: async () => {
       clearInterval(failsafe);
+      clearInterval(watchdog);
       try {
         ws?.close();
       } catch {}
