@@ -93,17 +93,20 @@ export async function startBot({ roomLink, botName, controlWsUrl, password }) {
     } catch { return false; }
   };
 
-  // Retry loop: if bot isn't in game after joinRoom, keep retrying
+  // Retry loop: if bot isn't in game after joinRoom, keep retrying.
+  // The initial joinRoomClient is slow; the 10s wait between attempts is enough
+  // time for a slow join to finish on its own, so re-check isInGame() right
+  // before reloading the page — otherwise we kill a successful join in progress.
   const retryUntilInGame = async () => {
     await new Promise((r) => setTimeout(r, 5000));
     for (let attempt = 0; attempt < 10; attempt++) {
       if (botInGame || await isInGame()) { botInGame = true; return; }
       log.warn(`Bot not in game (${botName}). Retrying in 10s... (attempt ${attempt + 1}/10)`);
       await new Promise((r) => setTimeout(r, 10000));
+      if (botInGame || await isInGame()) { botInGame = true; return; }
       try {
         await page.goto(roomLink, { waitUntil: "domcontentloaded" });
         await new Promise((r) => setTimeout(r, 3000));
-        // Re-run the join flow
         await (await import("./joinRoom.js")).joinRoomClient({ page, roomLink, password, nickname: botName });
       } catch (e) {
         log.warn(`Retry join failed (${botName}): ${e?.message || e}`);
