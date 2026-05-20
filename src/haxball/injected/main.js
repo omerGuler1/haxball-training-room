@@ -379,7 +379,22 @@
 
   // ── Bot control ─────────────────────────────────────────
 
+  // Dedupe control packets — bot keys are sticky on the input side, so we only
+  // need to send when the intent actually changes. A heartbeat refresh every
+  // ~250ms guarantees recovery from a dropped packet. Cuts host→bot traffic
+  // from 60/sec to <10/sec for the typical "bot keeps moving in one direction"
+  // case, freeing the bot Chromium event loop and dropping observed bot ping.
+  const lastIntent = new Map(); // botName -> { moveX, moveY, kick, sentAt }
   function postBotControl(botName, intent) {
+    const prev = lastIntent.get(botName);
+    const now = Date.now();
+    const changed = !prev
+      || prev.moveX !== intent.moveX
+      || prev.moveY !== intent.moveY
+      || prev.kick !== intent.kick;
+    // Always send when intent changes, when kick fires (needs power), or as heartbeat.
+    if (!changed && !intent.kick && prev && now - prev.sentAt < 250) return;
+    lastIntent.set(botName, { moveX: intent.moveX, moveY: intent.moveY, kick: intent.kick, sentAt: now });
     window.__HB_BRIDGE__?.post("bot.control", {
       botName,
       tick: state.tick,
