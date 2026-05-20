@@ -108,6 +108,7 @@ export async function startHost({ onReady }) {
           await page.evaluate((json) => {
             try {
               window.__HB_ROOM__?.setCustomStadium(json);
+              try { window.__HB_ROOM__?.startGame(); } catch {}
               window.__HB_ROOM__?.sendAnnouncement("Stadium reloaded.", null, 0xdddddd, "small", 1);
             } catch (e) {
               window.__HB_ROOM__?.sendAnnouncement(`Stadium reload failed: ${e?.message || e}`, null, 0xff4444, "small", 1);
