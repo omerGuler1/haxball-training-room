@@ -218,14 +218,9 @@
       return false;
     }
 
-    // !rekor is available to everyone
+    // !rekor is available to everyone — shows top 5 leaderboard
     if (cmd === "rekor") {
-      const rec = state.record;
-      if (rec && rec.seconds > 0 && rec.name) {
-        reply(room, player.id, "Rekor sahibi: " + rec.name + " - " + rec.seconds + " sn");
-      } else {
-        reply(room, player.id, "Henuz rekor yok. Topu bottan uzak tut!");
-      }
+      window.__HB_BRIDGE__?.post("record.getTop", { playerId: player.id, limit: 5 });
       return false;
     }
 

@@ -136,6 +136,12 @@ export function openDatabase(dbPath) {
       `).run(roomName, playerName, seconds);
     },
 
+    getTopRecords(roomName, limit = 5) {
+      return db.prepare(
+        "SELECT player_name, best_seconds FROM player_records WHERE room_name = ? ORDER BY best_seconds DESC LIMIT ?"
+      ).all(roomName, limit);
+    },
+
     // ── Room Status ─────────────────────────────────
 
     upsertRoomStatus({ roomName, matchState, matchMode, playerCount, scoreRed, scoreBlue, activePlayer, queueSize }) {

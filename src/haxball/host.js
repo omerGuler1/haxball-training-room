@@ -198,13 +198,46 @@ export async function startHost({ onReady }) {
       } catch (e) {
         log.error(`Personal record update failed: ${e?.message || e}`);
       }
+    } else if (msg.type === "record.getTop") {
+      const { playerId, limit } = msg.payload || {};
+      (async () => {
+        try {
+          const rows = db.getTopRecords(config.room.name, Math.max(1, Math.min(20, Number(limit) || 5)));
+          await page.evaluate((id, list) => {
+            const fmt = (s) => {
+              s = Math.max(0, Math.floor(s || 0));
+              const m = Math.floor(s / 60);
+              const r = s % 60;
+              return m > 0 ? `${m}dk ${r}sn` : `${r}sn`;
+            };
+            const room = window.__HB_ROOM__;
+            if (!room) return;
+            if (!list || list.length === 0) {
+              room.sendAnnouncement("Henuz kayitli rekor yok. Topu bottan uzak tut!", id, 0xdddddd, "small", 1);
+              return;
+            }
+            room.sendAnnouncement(`Top ${list.length} rekor:`, id, 0x66ff66, "bold", 1);
+            list.forEach((r, i) => {
+              room.sendAnnouncement(`${i + 1}. ${r.player_name} — ${fmt(r.best_seconds)}`, id, 0xdddddd, "small", 1);
+            });
+          }, playerId, rows);
+        } catch (e) {
+          log.error(`Top records get failed: ${e?.message || e}`);
+        }
+      })();
     } else if (msg.type === "record.getPersonal") {
       const { playerId, playerName } = msg.payload || {};
       (async () => {
         try {
           const row = db.getPersonalRecord(config.room.name, playerName);
+          const formatDur = (s) => {
+            s = Math.max(0, Math.floor(s || 0));
+            const m = Math.floor(s / 60);
+            const r = s % 60;
+            return m > 0 ? `${m}dk ${r}sn` : `${r}sn`;
+          };
           const text = row && row.best_seconds > 0
-            ? "Senin rekorun: " + row.best_seconds + " sn  (" + row.achieved_at + ")"
+            ? "Senin rekorun: " + formatDur(row.best_seconds) + "  (" + row.achieved_at + ")"
             : "Henuz kayitli rekorun yok. Topu bottan uzak tut!";
           await page.evaluate((id, t) => {
             window.__HB_ROOM__?.sendAnnouncement(t, id, 0xdddddd, "small", 1);
