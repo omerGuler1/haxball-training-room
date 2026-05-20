@@ -398,6 +398,11 @@
     if (newState === "STARTING" && state.matchState !== "STARTING") {
       startingEnteredAt = Date.now();
     }
+    // Leaving STARTING from any path: cancel the poll timer so it can't outlive the state.
+    if (newState !== "STARTING" && startingPollTimer) {
+      clearInterval(startingPollTimer);
+      startingPollTimer = null;
+    }
     state.matchState = newState;
     lifecycleEpoch++;
     emitRoomStatus();
