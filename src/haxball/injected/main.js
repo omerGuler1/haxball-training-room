@@ -267,8 +267,8 @@
           broadcast(room, "Yeni rekor: " + elapsedSec + " sn - " + holder.name);
           window.__HB_BRIDGE__?.post("record.update", { playerName: holder.name, seconds: elapsedSec });
         }
-        // Personal record (logged-in players only) — DB upsert handles "only if better"
-        if (holder && elapsedSec >= 5 && state.loggedInIds?.has(holder.id)) {
+        // Personal record (any player by nick) — DB upsert keeps only the best per name.
+        if (holder && elapsedSec >= 5) {
           window.__HB_BRIDGE__?.post("record.updatePersonal", { playerName: holder.name, seconds: elapsedSec });
         }
         court.counterTicks = 0;
