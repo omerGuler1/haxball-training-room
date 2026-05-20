@@ -5,8 +5,20 @@ export function createControlServer({ port, logger }) {
   const wss = new WebSocketServer({ port });
   const bots = new Map(); // name -> ws
 
+  // Drop control packets when the bot's socket buffer is congested. Better to
+  // skip a tick than queue a stale move command that arrives 200ms late.
+  const BACKPRESSURE_BYTES = 64 * 1024;
+  let backpressureWarnedAt = 0;
   function safeSend(ws, obj) {
     if (ws.readyState !== ws.OPEN) return;
+    if (ws.bufferedAmount > BACKPRESSURE_BYTES) {
+      const now = Date.now();
+      if (now - backpressureWarnedAt > 5000) {
+        backpressureWarnedAt = now;
+        logger?.warn?.(`Control WS backpressure (buffered=${ws.bufferedAmount}B), dropping packet`);
+      }
+      return;
+    }
     ws.send(JSON.stringify(obj));
   }
 
