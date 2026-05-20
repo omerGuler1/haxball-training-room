@@ -215,6 +215,19 @@
     if (!scores) return;
     const players = getPlayersWithDisc(room);
 
+    // Self-heal: a court mapping can go stale if onPlayerLeave didn't fire (rare,
+    // e.g. after watchdog restart races). Drop ids that no longer exist in the room.
+    for (const court of state.courts) {
+      if (court.botId != null && !players.some((x) => x.p.id === court.botId)) {
+        court.botId = null;
+      }
+      if (court.humanId != null && !players.some((x) => x.p.id === court.humanId)) {
+        court.humanId = null;
+        court.counterTicks = 0;
+        court.lastAnnouncedSec = 0;
+      }
+    }
+
     for (const court of state.courts) {
       if (!court.botId || !court.humanId) {
         // No human in this court — send idle (0,0) to bot so it stops
