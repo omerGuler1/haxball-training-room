@@ -225,6 +225,7 @@
         court.humanId = null;
         court.counterTicks = 0;
         court.lastAnnouncedSec = 0;
+        court.lastSignifBall = null;
       }
     }
 
@@ -274,15 +275,29 @@
         court.lastAnnouncedSec = 0;
         court.stationaryTicks = 0;
         court.stationaryWarned = false;
+        court.lastSignifBall = null;
       } else {
-        // Pause counter while ball is stationary (e.g. wedged in a corner)
-        const STATIONARY_THRESHOLD = 0.1; // ball speed (manhattan) below this = stationary
-        const STATIONARY_WARN_TICKS = 5 * 60; // 5 seconds at 60 ticks/sec
-        const ballSpeed = Math.abs(court.ballVel.x) + Math.abs(court.ballVel.y);
+        // Position-based wedge detection: track the last position where the ball
+        // moved meaningfully. Brief kick pulses (5-15 units) don't reset the
+        // reference, but a real rally (40+ units) does. This defeats the
+        // "tap kick every 5s to keep counter alive" cheat.
+        const SIGNIF_MOVE = 40;         // units needed to count as real movement
+        const WEDGE_WARN_TICKS = 3 * 60; // 3 seconds without real movement = wedged
+        if (!court.lastSignifBall) {
+          court.lastSignifBall = { x: ball.x, y: ball.y, tick: state.tick };
+        }
+        const sdx = ball.x - court.lastSignifBall.x;
+        const sdy = ball.y - court.lastSignifBall.y;
+        const movedFromRef = Math.sqrt(sdx * sdx + sdy * sdy);
+        if (movedFromRef >= SIGNIF_MOVE) {
+          court.lastSignifBall = { x: ball.x, y: ball.y, tick: state.tick };
+        }
+        const wedgedTicks = state.tick - court.lastSignifBall.tick;
+        const wedged = wedgedTicks >= WEDGE_WARN_TICKS;
 
-        if (ballSpeed < STATIONARY_THRESHOLD) {
-          court.stationaryTicks++;
-          if (court.stationaryTicks >= STATIONARY_WARN_TICKS && !court.stationaryWarned) {
+        if (wedged) {
+          court.stationaryTicks = wedgedTicks; // for diagnostics / !status
+          if (!court.stationaryWarned) {
             room.sendAnnouncement("Kosede bekleme cakkal, sayac durdu haberin olsun", court.humanId, 0xff8866, "small", 1);
             court.stationaryWarned = true;
           }
