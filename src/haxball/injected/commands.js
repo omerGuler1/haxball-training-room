@@ -154,7 +154,7 @@
       reply(
         room,
         player.id,
-        "Commands: !help !kayit !giris !bagla !profil !afk !rekor !rekorum !bigger !smaller !faster !slower !ball  (admin: !kick !ban !pausebot !resumebot !botdebug !reloadstadium)"
+        "Commands: !help !kayit !giris !bagla !profil !afk !rekor !rekorum !bigger !smaller !faster !slower !ball  (admin: !status !kick !ban !pausebot !resumebot !botdebug !reloadstadium)"
       );
       return false;
     }
@@ -333,6 +333,30 @@
       if (!target) target = list.find((p) => p.name.toLowerCase().includes(arg.toLowerCase()));
       if (!target) { reply(room, player.id, "Oyuncu bulunamadi: " + arg); return false; }
       try { room.kickPlayer(target.id, "Kicked by " + player.name, cmd === "ban"); } catch {}
+      return false;
+    }
+
+    if (cmd === "status") {
+      const nameOf = (id) => {
+        if (id == null) return "—";
+        const p = room.getPlayer(id);
+        return p ? `${p.name}#${id}` : `gone#${id}`;
+      };
+      const fmt = (n) => (Number.isFinite(n) ? n.toFixed(0) : "?");
+      reply(room, player.id, `mode=${state.matchMode} paused=${state.pausedBot} score=${room.getScores() ? "running" : "stopped"}`);
+      if (state.courts) {
+        for (const c of state.courts) {
+          const botDisc = c.botId != null ? room.getPlayerDiscProperties(c.botId) : null;
+          const humanDisc = c.humanId != null ? room.getPlayerDiscProperties(c.humanId) : null;
+          reply(
+            room,
+            player.id,
+            `${c.name}: bot=${nameOf(c.botId)} @(${fmt(botDisc?.x)},${fmt(botDisc?.y)}) | human=${nameOf(c.humanId)} @(${fmt(humanDisc?.x)},${fmt(humanDisc?.y)})`
+          );
+        }
+      } else {
+        reply(room, player.id, `humans=${state.humanIds.length} queued=${state.queuedHumanIds.length} afk=${state.afkIds.length} active=${nameOf(state.activeHumanId)}`);
+      }
       return false;
     }
 
