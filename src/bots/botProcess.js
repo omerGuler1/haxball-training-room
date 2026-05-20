@@ -204,18 +204,33 @@ export async function startBot({ roomLink, botName, controlWsUrl, password }) {
     log.warn(`Watchdog: bot not in game (${botName}) [${missedChecks}/2].`);
     if (missedChecks >= 2) {
       log.error(`Watchdog: bot lost room (${botName}). Exiting for orchestrator restart.`);
-      process.exit(1);
+      cleanExit(1);
     }
   }, 120_000);
 
-  // Surface browser disconnect immediately — no point waiting for the watchdog tick.
+  // Close Chromium before exiting so child processes (renderer/gpu/audio/utility)
+  // don't get orphaned to init. Otherwise every restart leaks ~15 zombie procs.
+  let exiting = false;
+  async function cleanExit(code) {
+    if (exiting) return;
+    exiting = true;
+    clearInterval(failsafe);
+    clearInterval(watchdog);
+    try { ws?.close(); } catch {}
+    try { await page.close({ runBeforeUnload: false }); } catch {}
+    try { await browser.close(); } catch {}
+    // Last-resort kill in case browser.close() hangs
+    setTimeout(() => process.exit(code), 3000).unref();
+    process.exit(code);
+  }
+
   browser.on("disconnected", () => {
     log.error(`Chromium disconnected (${botName}). Exiting for orchestrator restart.`);
-    process.exit(1);
+    cleanExit(1);
   });
   page.on("close", () => {
     log.error(`Chromium page closed (${botName}). Exiting for orchestrator restart.`);
-    process.exit(1);
+    cleanExit(1);
   });
 
   return {
