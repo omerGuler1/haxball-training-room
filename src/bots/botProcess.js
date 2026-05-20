@@ -203,7 +203,7 @@ export async function startBot({ roomLink, botName, controlWsUrl, password }) {
       log.error(`Watchdog: bot lost room (${botName}). Exiting for orchestrator restart.`);
       process.exit(1);
     }
-  }, 60_000);
+  }, 120_000);
 
   // Surface browser disconnect immediately — no point waiting for the watchdog tick.
   browser.on("disconnected", () => {
