@@ -33,8 +33,18 @@
 
   const isAllMode = state.matchMode === "all";
   const isSquaresMode = state.matchMode === "squares";
+  const isManualMode = state.matchMode === "manual";
+
+  const adminNicknames = new Set((cfg.permissions?.adminNicknames || []).map((s) => String(s)));
+  function grantNativeAdminIfMatch(player) {
+    if (!adminNicknames.size) return;
+    if (adminNicknames.has(player.name)) {
+      try { room.setPlayerAdmin(player.id, true); } catch {}
+    }
+  }
 
   function ensureTeams() {
+    if (isManualMode) return;
     const players = room.getPlayerList().filter((p) => p.id !== 0);
     for (const p of players) {
       if (isBotPlayer(p)) {
@@ -772,6 +782,19 @@
       state.playerAuths.set(player.id, player.auth);
     }
 
+    // ── Manual mode ───────────────────────────────────
+    // Host stays out of the way: no auto-team assignment, no bots, no lifecycle.
+    // The room admin (matching nickname) drives the game from Haxball's native UI.
+    if (isManualMode) {
+      if (!isBotPlayer(player)) {
+        state.humanIds.push(player.id);
+        grantNativeAdminIfMatch(player);
+        room.sendAnnouncement("Hosgeldiniz!", player.id, 0x66ff66, "bold", 1);
+      }
+      emitRoomStatus();
+      return;
+    }
+
     // ── Squares mode ──────────────────────────────────
     if (isSquaresMode) {
       if (isBotPlayer(player)) {
@@ -870,6 +893,11 @@
     state.afkIds = state.afkIds.filter((id) => id !== player.id);
     state.playerAuths?.delete(player.id);
     state.loggedInIds?.delete(player.id);
+
+    if (isManualMode) {
+      emitRoomStatus();
+      return;
+    }
 
     // ── Squares mode ──────────────────────────────────
     if (isSquaresMode) {
@@ -1074,6 +1102,8 @@
 
   room.onGameTick = function () {
     state.tick++;
+
+    if (isManualMode) return;
 
     if (isSquaresMode) {
       if (state.matchState === "PLAYING") squaresAiTick();
