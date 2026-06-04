@@ -34,7 +34,7 @@ if (!ROOM_ID) {
 const BOT_NAME       = process.env.BOT_NAME || "BatNN";
 const ROOM_PASSWORD  = process.env.HB_ROOM_PASSWORD || "";
 // const WEIGHTS_PATH   = process.env.NN_WEIGHTS_PATH || "./HaxAI-main/weights.json";
-const WEIGHTS_PATH   = process.env.NN_WEIGHTS_PATH || "./models/v12_league.json";
+const WEIGHTS_PATH   = process.env.NN_WEIGHTS_PATH || "./models/sp_v16_haxai.json";
 
 // ── Load weights ───────────────────────────────────────
 const W = JSON.parse(readFileSync(resolve(process.cwd(), WEIGHTS_PATH), "utf8"));

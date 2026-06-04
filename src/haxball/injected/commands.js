@@ -289,8 +289,9 @@
       }
       const mode = lifecycle.cycleCourtBall(court);
       const label =
-        mode === "prof" ? "prof topuna gecti" :
+        mode === "ffl"  ? "ffl topuna gecti" :
         mode === "valn" ? "valn topuna gecti" :
+        mode === "prof" ? "prof topuna gecti" :
         "default topa dondu";
       broadcast(room, player.name + " " + label + " (" + court.name + " kare).");
       return false;

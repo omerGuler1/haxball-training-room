@@ -65,17 +65,20 @@
 
   // ── Squares mode helpers ────────────────────────────────
 
-  // Stadium default ball props (3squares.hbs disc[0..2]) — playerPhysics.kickStrength=7.0
-  const COURT_DEFAULT_DISC = { radius: 6.4, bCoef: 0.5, invMass: 1, color: 0xFFFF00 };
-  // prof.hbs ball + invMass corrected for 3squares kickStrength.
-  // Original prof: kickStr=6.3 × invMass=1.5 = 9.45; 3squares kickStr=7.0
-  //   → match by invMass = 9.45/7.0 = 1.35
-  const PROF_BALL_DISC = { radius: 8, bCoef: 0.4, invMass: 1.35, color: 0xFF7F00 };
-  // valn v2 ball + invMass corrected for 3squares kickStrength.
-  // Original valn: kickStr=4.3 × invMass=1.5 = 6.45; 3squares kickStr=7.0
-  //   → match by invMass = 6.45/7.0 = 0.92
-  const VALN_BALL_DISC = { radius: 5.8, bCoef: 0.443, invMass: 0.92, color: 0xBEBEBE };
-  const BALL_MODE_CYCLE = ["default", "prof", "valn"];
+  // Stadium: 3squaresBats.hbs — playerPhysics.kickStrength=4.6, "preserve mechanics".
+  // Default ball mirrors the stadium's own ball props (radius 6.4, bCoef 0.41975,
+  // invMass 1.575) but recolored yellow. ffl mode is the stadium's original cyan.
+  const COURT_DEFAULT_DISC = { radius: 6.4, bCoef: 0.41975, invMass: 1.575, color: 0xFFFF00 };
+  const FFL_BALL_DISC      = { radius: 6.4, bCoef: 0.41975, invMass: 1.575, color: 0x00CCCC };
+  // prof.hbs ball + invMass corrected for 3squaresBats kickStrength.
+  // Original prof: kickStr=6.3 × invMass=1.5 = 9.45; 3squaresBats kickStr=4.6
+  //   → match by invMass = 9.45/4.6 = 2.054
+  const PROF_BALL_DISC = { radius: 8, bCoef: 0.4, invMass: 2.054, color: 0xFF7F00 };
+  // valn v2 ball + invMass corrected for 3squaresBats kickStrength.
+  // Original valn: kickStr=4.3 × invMass=1.5 = 6.45; 3squaresBats kickStr=4.6
+  //   → match by invMass = 6.45/4.6 = 1.402
+  const VALN_BALL_DISC = { radius: 5.8, bCoef: 0.443, invMass: 1.402, color: 0xBEBEBE };
+  const BALL_MODE_CYCLE = ["default", "ffl", "valn", "prof"];
   const BALL_BIGGER_STEP = 1.0;
   const BALL_BIGGER_MAX_USES = 5;
   const BALL_SPEED_STEP = 0.15;    // invMass delta per step (signed)
@@ -89,6 +92,8 @@
       props = { ...PROF_BALL_DISC };
     } else if (mode === "valn") {
       props = { ...VALN_BALL_DISC };
+    } else if (mode === "ffl") {
+      props = { ...FFL_BALL_DISC };
     } else {
       const bigUses = Math.max(0, Math.min(BALL_BIGGER_MAX_USES, court.biggerCount || 0));
       const spd = Math.max(-BALL_SPEED_MAX, Math.min(BALL_SPEED_MAX, court.speedCount || 0));
@@ -396,10 +401,17 @@
     if (!stadium) return;
     try {
       room.setCustomStadium(stadium);
+      applyBotTeamColors();
       broadcast(room, "Stadium loaded.");
     } catch (e) {
       broadcast(room, "Stadium load failed: " + (e?.message || e));
     }
+  }
+
+  // Equivalent to typing `/colors red 60 FC0303 000000 000000 000000` as admin.
+  // setCustomStadium resets team colors, so this must run after every stadium load.
+  function applyBotTeamColors() {
+    try { room.setTeamColors(1, 60, 0xFC0303, [0x000000, 0x000000, 0x000000]); } catch {}
   }
 
   // ── Bot control ─────────────────────────────────────────

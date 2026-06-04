@@ -108,6 +108,7 @@ export async function startHost({ onReady }) {
           await page.evaluate((json) => {
             try {
               window.__HB_ROOM__?.setCustomStadium(json);
+              try { window.__HB_ROOM__?.setTeamColors(1, 60, 0xFC0303, [0x000000, 0x000000, 0x000000]); } catch {}
               try { window.__HB_ROOM__?.startGame(); } catch {}
               window.__HB_ROOM__?.sendAnnouncement("Stadium reloaded.", null, 0xdddddd, "small", 1);
             } catch (e) {
