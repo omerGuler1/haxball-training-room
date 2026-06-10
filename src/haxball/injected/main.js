@@ -830,7 +830,7 @@
         room.sendAnnouncement("!afk yazarak spec gecebilirsiniz", player.id, 0xdddddd, "small", 1);
       }, 1500);
       setTimeout(() => {
-        room.sendAnnouncement("Iletisim ve sohbet icin discord: https://discord.gg/z84TRaSVT", player.id, 0x66aaff, "small", 1);
+        room.sendAnnouncement("Iletisim ve sohbet icin discord: https://discord.gg/Nu8HQQ2kY", player.id, 0x66aaff, "small", 1);
       }, 3000);
       const court = assignHumanToCourt(player.id);
       if (court) {
@@ -870,7 +870,7 @@
       room.sendAnnouncement("!afk yazarak spec gecebilirsiniz", player.id, 0xdddddd, "small", 1);
     }, 1500);
     setTimeout(() => {
-      room.sendAnnouncement("Iletisim ve sohbet icin discord: https://discord.gg/z84TRaSVT", player.id, 0x66aaff, "small", 1);
+      room.sendAnnouncement("Iletisim ve sohbet icin discord: https://discord.gg/Nu8HQQ2kY", player.id, 0x66aaff, "small", 1);
     }, 3000);
 
     if (isAllMode) {
