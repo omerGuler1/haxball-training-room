@@ -63,6 +63,16 @@ export function createControlServer({ port, logger }) {
       safeSend(ws, msg);
       return true;
     },
+    killBot: (name, reason = "watchdog") => {
+      const ws = bots.get(name);
+      if (!ws) return false;
+      // Tell the bot to call cleanExit(1) — process orchestrator will respawn.
+      // Bypass backpressure check; this message must land.
+      if (ws.readyState === ws.OPEN) {
+        try { ws.send(JSON.stringify({ t: ControlMsgType.KILL, reason })); } catch {}
+      }
+      return true;
+    },
     broadcast: (msg) => {
       for (const ws of bots.values()) safeSend(ws, msg);
     },

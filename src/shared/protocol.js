@@ -4,6 +4,7 @@ export const ControlMsgType = Object.freeze({
   RELEASE: "release",
   PING: "ping",
   PONG: "pong",
+  KILL: "kill",
 });
 
 export function makeHello({ name }) {

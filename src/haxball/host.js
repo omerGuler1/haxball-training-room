@@ -93,6 +93,16 @@ export async function startHost({ onReady }) {
       const { botName, tick, moveX, moveY, kick, kickPower } = msg.payload || {};
       if (!botName) return;
       control.sendToBot(botName, { t: "control", tick, moveX, moveY, kick, kickPower });
+    } else if (msg.type === "bot.kill") {
+      const { botName, reason } = msg.payload || {};
+      if (!botName) return;
+      log.warn(`Bot kill requested: ${botName} (reason=${reason || "watchdog"})`);
+      control.killBot(botName, reason || "watchdog");
+    } else if (msg.type === "host.exit") {
+      const reason = msg.payload?.reason || "watchdog";
+      log.error(`Host exit requested by injected watchdog (reason=${reason}). Process will exit.`);
+      // Let bots cleanly disconnect first, then exit for orchestrator restart.
+      setTimeout(() => process.exit(1), 500);
     } else if (msg.type === "debug.tick") {
       if (config.debug.botDebug) log.debug(JSON.stringify(msg.payload));
     } else if (msg.type === "stadium.reload") {

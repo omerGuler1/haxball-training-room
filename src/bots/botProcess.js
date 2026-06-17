@@ -156,6 +156,11 @@ export async function startBot({ roomLink, botName, controlWsUrl, password }) {
         await input.releaseAll();
         return;
       }
+      if (msg?.t === ControlMsgType.KILL || msg?.t === "kill") {
+        log.error(`Kill signal from host (${botName}, reason=${msg.reason || "unspecified"}). Exiting for orchestrator restart.`);
+        cleanExit(1);
+        return;
+      }
     });
 
     ws.on("close", async () => {

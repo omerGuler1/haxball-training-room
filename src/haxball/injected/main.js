@@ -235,12 +235,15 @@
     for (const court of state.courts) {
       if (court.botId != null && !players.some((x) => x.p.id === court.botId)) {
         court.botId = null;
+        court.botMoveRef = null;
+        court.botKillRequested = false;
       }
       if (court.humanId != null && !players.some((x) => x.p.id === court.humanId)) {
         court.humanId = null;
         court.counterTicks = 0;
         court.lastAnnouncedSec = 0;
         court.lastSignifBall = null;
+        court.humanMoveRef = null;
       }
     }
 
@@ -339,6 +342,51 @@
         kick: intent.kick,
         kickPower: intent.kickPower,
       });
+
+      // ── Movement watchdog (bot) ─────────────────────────────
+      // If the bot disc hasn't actually moved >5 units in 15s of PLAYING while
+      // a human is present and the ball is in play, the bot's Chromium has
+      // probably frozen (renderer crash, GC pause, blocked event loop).
+      // Signal a kill so the orchestrator can respawn it.
+      const BOT_FREEZE_MOVE = 5;        // units
+      const BOT_FREEZE_TICKS = 15 * 60; // 15 sec at 60fps
+      if (!court.botMoveRef) {
+        court.botMoveRef = { x: botPlayer.disc.x, y: botPlayer.disc.y, tick: state.tick };
+      }
+      const bdx = botPlayer.disc.x - court.botMoveRef.x;
+      const bdy = botPlayer.disc.y - court.botMoveRef.y;
+      if (Math.sqrt(bdx * bdx + bdy * bdy) >= BOT_FREEZE_MOVE) {
+        court.botMoveRef = { x: botPlayer.disc.x, y: botPlayer.disc.y, tick: state.tick };
+        court.botKillRequested = false;
+      } else if (!court.botKillRequested && state.tick - court.botMoveRef.tick >= BOT_FREEZE_TICKS) {
+        court.botKillRequested = true;
+        broadcast(room, botPlayer.p.name + " donmus gibi, yeniden baslatiyorum...");
+        window.__HB_BRIDGE__?.post("bot.kill", { botName: botPlayer.p.name, reason: "movement-freeze" });
+      }
+
+      // ── AFK auto-spec (human) ───────────────────────────────
+      // If the human in this court hasn't moved >30 units in 60s, drop them
+      // to spectator so a queued player can take the court.
+      const humanPlayer = players.find((x) => x.p.id === court.humanId);
+      if (humanPlayer?.disc) {
+        const HUMAN_AFK_MOVE = 30;        // units
+        const HUMAN_AFK_TICKS = 60 * 60;  // 60 sec
+        if (!court.humanMoveRef) {
+          court.humanMoveRef = { x: humanPlayer.disc.x, y: humanPlayer.disc.y, tick: state.tick };
+        }
+        const hdx = humanPlayer.disc.x - court.humanMoveRef.x;
+        const hdy = humanPlayer.disc.y - court.humanMoveRef.y;
+        if (Math.sqrt(hdx * hdx + hdy * hdy) >= HUMAN_AFK_MOVE) {
+          court.humanMoveRef = { x: humanPlayer.disc.x, y: humanPlayer.disc.y, tick: state.tick };
+        } else if (state.tick - court.humanMoveRef.tick >= HUMAN_AFK_TICKS) {
+          const humanId = court.humanId;
+          const humanName = humanPlayer.p.name;
+          if (!state.afkIds.includes(humanId)) state.afkIds.push(humanId);
+          try { room.setPlayerTeam(humanId, 0); } catch {}
+          broadcast(room, humanName + " 60sn hareketsiz → spec'e alindi (!afk ile geri donebilir).");
+          court.humanMoveRef = null;
+        }
+      }
     }
   }
 
@@ -825,6 +873,7 @@
       }
       // Human joined
       state.humanIds.push(player.id);
+      grantNativeAdminIfMatch(player);
       room.sendAnnouncement("Antrenman odasina hosgeldiniz!", player.id, 0x66ff66, "bold", 1);
       setTimeout(() => {
         room.sendAnnouncement("!afk yazarak spec gecebilirsiniz", player.id, 0xdddddd, "small", 1);
@@ -865,6 +914,7 @@
     }
 
     state.humanIds.push(player.id);
+    grantNativeAdminIfMatch(player);
     room.sendAnnouncement("Antrenman odasina hosgeldiniz!", player.id, 0x66ff66, "bold", 1);
     setTimeout(() => {
       room.sendAnnouncement("!afk yazarak spec gecebilirsiniz", player.id, 0xdddddd, "small", 1);
@@ -1135,6 +1185,44 @@
   room.onPlayerChat = function (player, message) {
     return handleChatCommand({ room, state, player, message });
   };
+
+  // ── Game-stuck watchdog (squares mode) ────────────────────
+  // Runs outside onGameTick so it fires when the game is NOT running.
+  // If a court has both a bot and a human assigned but no game has started
+  // for STUCK_WARN_MS, retry start. If still stuck after STUCK_KILL_MS,
+  // ask host to exit so PM2 restarts the whole stack from a clean state
+  // (catches long-uptime degradation where HBInit's startGame silently fails).
+  if (isSquaresMode) {
+    const STUCK_WARN_MS = 30_000;
+    const STUCK_KILL_MS = 90_000;
+    let stuckSince = null;
+    let warnedAt = 0;
+    setInterval(() => {
+      if (!state.courts) return;
+      // "Ready to play" = at least one court has both a bot AND a non-AFK human.
+      const ready = state.courts.some((c) =>
+        c.botId != null && c.humanId != null && !state.afkIds.includes(c.humanId)
+      );
+      const playing = room.getScores() != null;
+      if (!ready || playing) {
+        stuckSince = null;
+        warnedAt = 0;
+        return;
+      }
+      // Ready but not playing — count how long.
+      if (!stuckSince) stuckSince = Date.now();
+      const elapsed = Date.now() - stuckSince;
+      if (elapsed >= STUCK_KILL_MS) {
+        window.__HB_BRIDGE__?.post("host.exit", { reason: "game-stuck-90s" });
+        stuckSince = null;
+      } else if (elapsed >= STUCK_WARN_MS && Date.now() - warnedAt > 15_000) {
+        warnedAt = Date.now();
+        try { if (room.getScores() != null) room.stopGame(); } catch {}
+        ensureTeams();
+        squaresStartGameIfReady();
+      }
+    }, 5000);
+  }
 
   // Expose lifecycle helpers for commands.js
   window.__HB_LIFECYCLE__ = {
