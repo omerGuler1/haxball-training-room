@@ -355,21 +355,31 @@
       });
 
       // ── Movement watchdog (bot) ─────────────────────────────
-      // If the bot disc hasn't actually moved >5 units in 15s of PLAYING while
-      // a human is present and the ball is in play, the bot's Chromium has
-      // probably frozen (renderer crash, GC pause, blocked event loop).
-      // Signal a kill so the orchestrator can respawn it.
-      const BOT_FREEZE_MOVE = 5;        // units
-      const BOT_FREEZE_TICKS = 15 * 60; // 15 sec at 60fps
+      // Fire ONLY when both (a) position hasn't moved meaningfully AND
+      // (b) disc velocity is effectively zero for the entire window. The
+      // velocity check distinguishes a frozen Chromium (no input → friction
+      // brings velocity to 0) from a bot that's actively pressing keys but
+      // pinned against a wall (velocity oscillates around a small non-zero
+      // value as friction fights acceleration). Without (b) the old detector
+      // was killing perfectly healthy bots stuck in corners.
+      const BOT_FREEZE_MOVE = 25;        // units of position drift allowed in window
+      const BOT_FREEZE_TICKS = 40 * 60;  // 40 sec at 60fps
+      const BOT_LIVE_SPEED = 0.05;       // |vx|+|vy| above this counts as "still alive"
+      const bSpeed = Math.abs(botPlayer.disc.xspeed || 0) + Math.abs(botPlayer.disc.yspeed || 0);
       if (!court.botMoveRef) {
-        court.botMoveRef = { x: botPlayer.disc.x, y: botPlayer.disc.y, tick: state.tick };
+        court.botMoveRef = { x: botPlayer.disc.x, y: botPlayer.disc.y, tick: state.tick, lastAliveTick: state.tick };
       }
+      if (bSpeed > BOT_LIVE_SPEED) court.botMoveRef.lastAliveTick = state.tick;
       const bdx = botPlayer.disc.x - court.botMoveRef.x;
       const bdy = botPlayer.disc.y - court.botMoveRef.y;
       if (Math.sqrt(bdx * bdx + bdy * bdy) >= BOT_FREEZE_MOVE) {
-        court.botMoveRef = { x: botPlayer.disc.x, y: botPlayer.disc.y, tick: state.tick };
+        court.botMoveRef = { x: botPlayer.disc.x, y: botPlayer.disc.y, tick: state.tick, lastAliveTick: state.tick };
         court.botKillRequested = false;
-      } else if (!court.botKillRequested && state.tick - court.botMoveRef.tick >= BOT_FREEZE_TICKS) {
+      } else if (
+        !court.botKillRequested
+        && state.tick - court.botMoveRef.tick >= BOT_FREEZE_TICKS
+        && state.tick - court.botMoveRef.lastAliveTick >= BOT_FREEZE_TICKS
+      ) {
         court.botKillRequested = true;
         broadcast(room, botPlayer.p.name + " donmus gibi, yeniden baslatiyorum...");
         window.__HB_BRIDGE__?.post("bot.kill", { botName: botPlayer.p.name, reason: "movement-freeze" });
