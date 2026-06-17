@@ -254,6 +254,7 @@
         court.lastAnnouncedSec = 0;
         court.lastSignifBall = null;
         court.humanMoveRef = null;
+        court.humanPosHistory = null;
       }
     }
 
@@ -375,26 +376,59 @@
       }
 
       // ── AFK auto-spec (human) ───────────────────────────────
-      // If the human in this court hasn't moved >30 units in 60s, drop them
-      // to spectator so a queued player can take the court.
+      // Sample the human's disc position every ~0.5s into a 30s ring buffer.
+      // If the manhattan diameter of all samples in the window stays under
+      // AFK_DIAM units, the player is wandering only inside a tiny zone
+      // (= bot is pushing them around, or they're literally AFK). Snap them
+      // to spec and free the court so the queue can advance.
       const humanPlayer = players.find((x) => x.p.id === court.humanId);
       if (humanPlayer?.disc) {
-        const HUMAN_AFK_MOVE = 30;        // units
-        const HUMAN_AFK_TICKS = 60 * 60;  // 60 sec
-        if (!court.humanMoveRef) {
-          court.humanMoveRef = { x: humanPlayer.disc.x, y: humanPlayer.disc.y, tick: state.tick };
+        const AFK_TICKS = 30 * 60;        // 30 sec
+        const AFK_SAMPLE_INTERVAL = 30;   // every 0.5s @60fps
+        const AFK_DIAM = 40;              // |maxX-minX| + |maxY-minY|
+        if (!court.humanPosHistory) court.humanPosHistory = [];
+        const hist = court.humanPosHistory;
+        if (hist.length === 0 || state.tick - hist[hist.length - 1].tick >= AFK_SAMPLE_INTERVAL) {
+          hist.push({ x: humanPlayer.disc.x, y: humanPlayer.disc.y, tick: state.tick });
         }
-        const hdx = humanPlayer.disc.x - court.humanMoveRef.x;
-        const hdy = humanPlayer.disc.y - court.humanMoveRef.y;
-        if (Math.sqrt(hdx * hdx + hdy * hdy) >= HUMAN_AFK_MOVE) {
-          court.humanMoveRef = { x: humanPlayer.disc.x, y: humanPlayer.disc.y, tick: state.tick };
-        } else if (state.tick - court.humanMoveRef.tick >= HUMAN_AFK_TICKS) {
-          const humanId = court.humanId;
-          const humanName = humanPlayer.p.name;
-          if (!state.afkIds.includes(humanId)) state.afkIds.push(humanId);
-          try { room.setPlayerTeam(humanId, 0); } catch {}
-          broadcast(room, humanName + " 60sn hareketsiz → spec'e alindi (!afk ile geri donebilir).");
-          court.humanMoveRef = null;
+        // Drop samples older than AFK_TICKS
+        while (hist.length && state.tick - hist[0].tick > AFK_TICKS) hist.shift();
+        if (hist.length >= 40 && state.tick - hist[0].tick >= AFK_TICKS) {
+          let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+          for (const s of hist) {
+            if (s.x < minX) minX = s.x;
+            if (s.x > maxX) maxX = s.x;
+            if (s.y < minY) minY = s.y;
+            if (s.y > maxY) maxY = s.y;
+          }
+          const diameter = (maxX - minX) + (maxY - minY);
+          if (diameter < AFK_DIAM) {
+            const humanId = court.humanId;
+            const humanName = humanPlayer.p.name;
+            if (!state.afkIds.includes(humanId)) state.afkIds.push(humanId);
+            try { room.setPlayerTeam(humanId, 0); } catch {}
+            broadcast(room, humanName + " 30sn hareketsiz → spec'e alindi (!afk ile geri donebilir).");
+            // Free the court immediately so the bot stops chasing on the next
+            // tick, then promote a queued player into the freed slot.
+            court.humanId = null;
+            court.counterTicks = 0;
+            court.lastAnnouncedSec = 0;
+            court.humanPosHistory = null;
+            court.lastSignifBall = null;
+            try { resetCourtBall(court); } catch {}
+            while (state.queuedHumanIds.length > 0) {
+              const nextId = state.queuedHumanIds.shift();
+              const np = room.getPlayer(nextId);
+              if (!np || state.afkIds.includes(nextId)) continue;
+              court.humanId = nextId;
+              try { room.setPlayerTeam(nextId, traineeTeam); } catch {}
+              broadcast(room, np.name + " → " + court.name + " kare!");
+              setTimeout(() => {
+                try { room.setPlayerDiscProperties(nextId, { x: court.humanSpawnX, y: 0 }); } catch {}
+              }, 200);
+              break;
+            }
+          }
         }
       }
     }
