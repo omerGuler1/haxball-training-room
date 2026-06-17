@@ -36,9 +36,19 @@
   const isManualMode = state.matchMode === "manual";
 
   const adminNicknames = new Set((cfg.permissions?.adminNicknames || []).map((s) => String(s)));
+  const adminAuthIds = new Set((cfg.permissions?.adminAuthIds || []).map((s) => String(s)));
   function grantNativeAdminIfMatch(player) {
-    if (!adminNicknames.size) return;
-    if (adminNicknames.has(player.name)) {
+    // Prefer secure auth-based check when ADMIN_AUTH_IDS is configured.
+    // Falls back to nickname match only when no auth IDs are set (insecure
+    // but matches commands.js isAdmin() behavior).
+    if (adminAuthIds.size > 0) {
+      const auth = player.auth || state?.playerAuths?.get(player.id) || "";
+      if (auth && adminAuthIds.has(auth)) {
+        try { room.setPlayerAdmin(player.id, true); } catch {}
+      }
+      return;
+    }
+    if (adminNicknames.size && adminNicknames.has(player.name)) {
       try { room.setPlayerAdmin(player.id, true); } catch {}
     }
   }
