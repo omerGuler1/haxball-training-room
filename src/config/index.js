@@ -6,47 +6,44 @@ import dotenv from "dotenv";
 
 const DEFAULTS = {
   room: {
-    name: "1v1 Training Arena",
+    name: "🦇🕸️ Bats Training Bots v1",
     password: "",
-    public: false,
-    maxPlayers: 6,
+    public: true,
+    maxPlayers: 10,
     geo: { code: "TR", lat: 39.0, lon: 35.0 },
     noPlayer: true,
     token: "",
   },
   stadium: {
-    path: "./v1.hbs",
+    path: "./3squaresBats.hbs",
   },
   bots: {
-    count: 1,
-    names: ["BatBot"],
-    avatarPrefix: "🤖",
-    launchDelayMs: 2500,
-    userAgent: null,
-    decisionProfile: "simple", // "simple" (default chase-and-kick) | "pro" (1v1 strategic)
+    count: 3,
+    names: ["BatBot1", "BatBot2", "BatBot3"],
+    avatarPrefix: "",
+    launchDelayMs: 6000,
+    userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    decisionProfile: "simple",
   },
   training: {
     autoStart: true,
-    /** Haxball: 1 = Red, 2 = Blue */
     botTeamId: 1,
     traineeTeamId: 2,
   },
   match: {
-    mode: "1v1", // "1v1" = queue system, "all" = everyone plays on blue
+    mode: "squares",
+    solo: false,
     scoreLimit: 3,
     timeLimit: 180,
     matchOverPauseMs: 5000,
     autoRestart: true,
   },
   permissions: {
-    adminNicknames: [],
+    adminNicknames: ["bats"],
     adminAuthIds: [],
   },
   db: {
     path: "./data/haxball.db",
-  },
-  nn: {
-    weightsPath: null, // optional, for DECISION_PROFILE=nn
   },
   discord: {
     token: "",
@@ -118,7 +115,6 @@ export function loadConfig() {
   cfg.bots.launchDelayMs = parseIntSafe(process.env.BOT_LAUNCH_DELAY_MS, cfg.bots.launchDelayMs);
   cfg.bots.userAgent = process.env.BOT_USER_AGENT || cfg.bots.userAgent;
   cfg.bots.decisionProfile = process.env.DECISION_PROFILE ?? cfg.bots.decisionProfile;
-  cfg.nn.weightsPath = process.env.NN_WEIGHTS_PATH ?? cfg.nn.weightsPath;
 
   cfg.db.path = process.env.DB_PATH ?? cfg.db.path;
   cfg.discord.token = process.env.DISCORD_TOKEN ?? cfg.discord.token;
@@ -126,6 +122,7 @@ export function loadConfig() {
   cfg.discord.channelId = process.env.DISCORD_CHANNEL_ID ?? cfg.discord.channelId;
 
   cfg.match.mode = process.env.MATCH_MODE ?? cfg.match.mode;
+  cfg.match.solo = parseBool(process.env.MATCH_SOLO, cfg.match.solo);
   cfg.match.scoreLimit = parseIntSafe(process.env.MATCH_SCORE_LIMIT, cfg.match.scoreLimit);
   cfg.match.timeLimit = parseIntSafe(process.env.MATCH_TIME_LIMIT, cfg.match.timeLimit);
   cfg.match.matchOverPauseMs = parseIntSafe(process.env.MATCH_OVER_PAUSE_MS, cfg.match.matchOverPauseMs);

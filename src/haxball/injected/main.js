@@ -683,6 +683,38 @@
   const isProProfile    = decisionProfile === "pro";
   const isNnProfile     = decisionProfile === "nn";
   const isProBotProfile = decisionProfile === "probot";
+  const isSquareProfile = decisionProfile === "square";
+  const isHumanProfile  = decisionProfile === "human";
+  const isClassicProfile = decisionProfile === "classic";
+
+  // Single-agent square-room ball-control (Task A wall rally). No opponent needed; reads the ball
+  // (disc 0) + the bot's own disc and runs window.__HB_SQUARE_DECISION__ (scripted teacher, or a
+  // 17-dim NN if loaded). Intended for a single-square, origin-centered stadium (1square_ok.hbs).
+  function aiTickSquare() {
+    // Decide at the TRAINING rate (20Hz = every 3 engine ticks). onGameTick fires at 60Hz; deciding
+    // every tick made the ball-acceleration obs (dvx/dvy) ~1/3 of the trained scale → OOD → the policy
+    // went passive (no kicks, constant direction). Between decisions the bot holds its last input.
+    if (state.tick % 3 !== 0) return;
+    const sq = window.__HB_SQUARE_DECISION__;
+    if (!sq) return;
+    if (room.getScores() == null) return;
+    const ball = getBall(room);
+    if (!ball) return;
+    const players = getPlayersWithDisc(room);
+    const botPlayer = players.find((x) => x.isBot && x.p.team === botTeam);
+    if (!botPlayer?.disc) return;
+    const ballVel = (typeof ball.xspeed === "number")
+      ? { x: ball.xspeed, y: ball.yspeed }
+      : estimateBallVel(state.lastBall, ball);
+    state.lastBall = ball;
+    const bot = { x: botPlayer.disc.x, y: botPlayer.disc.y, vx: botPlayer.disc.xspeed || 0, vy: botPlayer.disc.yspeed || 0 };
+    const b = { x: ball.x, y: ball.y, vx: ballVel.x, vy: ballVel.y };
+    // keep-away: the opponent = any other player with a disc (the human you join as, or another bot)
+    const oppPlayer = players.find((x) => x.disc && x.p.id !== botPlayer.p.id);
+    const opp = oppPlayer ? { x: oppPlayer.disc.x, y: oppPlayer.disc.y, vx: oppPlayer.disc.xspeed || 0, vy: oppPlayer.disc.yspeed || 0 } : null;
+    const intent = sq.squareIntent({ bot, ball: b, opp }, state.tick);
+    postBotControl(botPlayer.p.name, { moveX: intent.ax, moveY: intent.ay, kick: intent.kick, kickPower: intent.kickPower });
+  }
 
   function aiTickPro() {
     const proApi = window.__HB_PRO_DECISION__;
@@ -725,8 +757,10 @@
     }
   }
 
-  function aiTickNN() {
-    const nnApi = window.__HB_NN_DECISION__;
+  function aiTickNN()      { return aiTickNnLike(window.__HB_NN_DECISION__); }
+  function aiTickHuman()   { return aiTickNnLike(window.__HB_HUMAN_DECISION__); }
+  function aiTickClassic() { return aiTickNnLike(window.__HB_CLASSIC_DECISION__); }
+  function aiTickNnLike(nnApi) {
     if (!nnApi) return;
     const scores = room.getScores();
     if (!scores) return;
@@ -834,8 +868,11 @@
 
   function aiTick() {
     if (state.pausedBot) return;
+    if (isSquareProfile) return aiTickSquare();
     if (isProProfile)    return aiTickPro();
     if (isNnProfile)     return aiTickNN();
+    if (isHumanProfile)  return aiTickHuman();
+    if (isClassicProfile) return aiTickClassic();
     if (isProBotProfile) return aiTickProBot();
     const scores = room.getScores();
     if (!scores) return;
@@ -1102,6 +1139,8 @@
     ensureTeams();
     if (isProProfile)    window.__HB_PRO_DECISION__?.resetProMemory(state.tick);
     if (isNnProfile)     window.__HB_NN_DECISION__?.resetNnMemory();
+    if (isHumanProfile)  window.__HB_HUMAN_DECISION__?.resetNnMemory();
+    if (isClassicProfile) window.__HB_CLASSIC_DECISION__?.resetNnMemory();
     if (isProBotProfile) window.__HB_TREEBOT_DECISION__?.resetTreeBotMemory();
 
     if (isSquaresMode) {
@@ -1207,6 +1246,8 @@
     state.ballVel = { x: 0, y: 0 };
     if (isProProfile)    window.__HB_PRO_DECISION__?.resetProMemory(state.tick);
     if (isNnProfile)     window.__HB_NN_DECISION__?.resetNnMemory();
+    if (isHumanProfile)  window.__HB_HUMAN_DECISION__?.resetNnMemory();
+    if (isClassicProfile) window.__HB_CLASSIC_DECISION__?.resetNnMemory();
     if (isProBotProfile) window.__HB_TREEBOT_DECISION__?.resetTreeBotMemory();
     window.__HB_BRIDGE__?.post("room.positionsReset", {});
 
@@ -1276,6 +1317,21 @@
         squaresStartGameIfReady();
       }
     }, 5000);
+  }
+
+  // ── Solo bootstrap (single-bot skill demos, e.g. DECISION_PROFILE=square) ────────
+  // onGameTick doesn't fire while no game runs, and the human-centric lifecycle won't
+  // start a match with only a bot present. This interval keeps a game live whenever a
+  // bot is on the bot team and no game is running (also auto-restarts if it ever stops).
+  if (cfg.match?.solo && !isSquaresMode) {
+    setInterval(() => {
+      try {
+        if (room.getScores() != null) return;       // a game is already running
+        ensureTeams();
+        if (botsOnBotTeamCount() < 1) return;        // wait for the bot to join
+        room.startGame();
+      } catch {}
+    }, 2000);
   }
 
   // Expose lifecycle helpers for commands.js

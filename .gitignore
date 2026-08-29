@@ -1,31 +1,8 @@
 node_modules/
-data/
-*.db
+data/haxball.db
 *.log
-bot-*-*.png
 .DS_Store
-
-# Python training (hb_train/) — generated artefacts
-hb_train/.venv/
-hb_train/checkpoints/
-hb_train/runs/
-hb_train/recordings/
-hb_train/models/
-hb_train/luxora_ursinaxball.hbs
-hb_train/__pycache__/
-hb_train/**/__pycache__/
-hb_train/**/*.pyc
-
-# Reference projects (kept locally; too large to commit)
-HaxballGym-master/
-haxball-ai-master/
-cs7632-haxball-ai-master/
-
-# Local-only stadium variants
-v1-v2.hbs
-prof.hbs
-train.hbs
-train_bat_futsal_bg_old_ball_color.hbs
-bats_map_half_ball_original.hbs
-bats_map_no_goals_wall_bounce.hbs
-valn v2*.hbs
+*.db-shm
+*.db-wal
+.kilo/
+hb_train/

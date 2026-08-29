@@ -1,9 +1,9 @@
 {
-  "name": "haxball-training-room-bots",
+  "name": "hax-3squares-bats",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Haxball private training room host + cooperative passing bots (Puppeteer-driven).",
+  "description": "Haxball 3-squares bats mod with Discord bot and SQLite database integration.",
   "engines": {
     "node": ">=18"
   },

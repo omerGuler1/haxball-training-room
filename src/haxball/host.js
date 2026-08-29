@@ -283,9 +283,7 @@ export async function startHost({ onReady }) {
     "injected/state.js",
     "injected/perception.js",
     "injected/decision.js",
-    "injected/proDecision.js",
-    "injected/nnDecision.js",
-    "injected/treeBotDecision.js",
+    "injected/squareDecision.js",
     "injected/botMemory.js",
     "injected/receivePass.js",
     "injected/commands.js",
@@ -312,33 +310,18 @@ export async function startHost({ onReady }) {
     log.warn(`Could not load record: ${e?.message || e}`);
   }
 
-  // Optional: load NN weights JSON for DECISION_PROFILE=nn
-  let nnWeights = null;
-  if (config.nn?.weightsPath) {
-    const weightsAbs = path.resolve(process.cwd(), config.nn.weightsPath);
-    try {
-      const raw = await fs.readFile(weightsAbs, "utf8");
-      nnWeights = JSON.parse(raw);
-      log.info(`Loaded NN weights: ${weightsAbs}`);
-    } catch (e) {
-      log.error(`Failed to load NN weights: ${weightsAbs} — ${e?.message || e}`);
-    }
-  }
-
   await page.evaluate(
-    (cfg, stadiumJson, record, weights) => {
+    (cfg, stadiumJson, record) => {
       window.__HB_CONFIG__ = cfg;
       if (stadiumJson) {
         window.__HB_CONFIG__.stadium = window.__HB_CONFIG__.stadium || {};
         window.__HB_CONFIG__.stadium.jsonString = stadiumJson;
       }
       window.__HB_CONFIG__.initialRecord = record;
-      if (weights) window.__HB_NN_WEIGHTS__ = weights;
     },
     config,
     stadiumJsonString,
-    existingRecord,
-    nnWeights
+    existingRecord
   );
 
   await page.evaluate(injected);

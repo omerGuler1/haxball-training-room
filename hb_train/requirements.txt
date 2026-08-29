@@ -1,8 +1,0 @@
-# Pinned to versions verified working on Apple Silicon Python 3.10.
-ursinaxball==0.2.3
-haxballgym==0.5.7
-stable-baselines3==2.3.2
-gymnasium==0.29.1
-torch==2.11.0
-tensorboard==2.20.0
-numpy==1.23.5
