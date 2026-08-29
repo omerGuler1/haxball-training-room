@@ -6,3 +6,5 @@ data/haxball.db
 *.db-wal
 .kilo/
 hb_train/
+*.env
+!.env.example
