@@ -1,5 +1,9 @@
 # Hax 3Squares Bats Mod
 
+![Demo](demo.gif)
+
+**3 kareli sahada (3squaresBats.hbs) topu BatBot'lardan olabildiğince uzun süre uzak tutma modu.** Her court'ta 1 BatBot + 1 insan oyuncusu. Rekor sistemi (global + kişisel), !bigger/!faster/!ball komutları, Discord botu ve SQLite DB (auth, rekor takibi) entegre.
+
 **3 kareli sahada (3squaresBats.hbs) topu BatBot'lardan olabildiğince uzun süre uzak tutma modu.** Her court'ta 1 BatBot + 1 insan oyuncusu. Rekor sistemi (global + kişisel), !bigger/!faster/!ball komutları, Discord botu ve SQLite DB (auth, rekor takibi) entegre.
 
 ## Türkçe
@@ -31,7 +35,25 @@ pm2 save && pm2 startup
 - Temizlenmiş: Tüm AI training (tools, models, hb_train, replays, nn/pro/classic karar dosyaları) silindi. Sadece bu mod + Discord + DB kaldı.
 - Config: `.env.3squares` (token, BOT_COUNT=3, MATCH_MODE=squares, PUPPETEER_HEADLESS=true vb.).
 
-HAXBALL_TOKEN'i `haxball.com/headlesstoken`'dan yenileyin (24s expiry).
+**Dikkat Edilecekler:**
+- `HAXBALL_TOKEN` 24 saatte bir yenilenmeli (`haxball.com/headlesstoken`).
+- VPS'te `PUPPETEER_HEADLESS=true` ve `PUPPETEER_EXECUTABLE_PATH` doğru olmalı.
+- DB (`data/haxball.db`): Rekorlar + `!kayit`/`!bagla` auth sistemi (Discord entegrasyonu şart).
+- Bot mantığı: `src/haxball/injected/squareDecision.js:73` (squareIntent) ve `main.js:237` (squaresAiTick + court tracking).
+- Komutlar `commands.js` ve `main.js` içinde (sadece squares modunda !bigger/!ball çalışır).
+- Değişiklik sonrası `npm run lint` (node -c) çalıştırın.
+
+---
+
+## English
+
+**Notes:**
+- Renew `HAXBALL_TOKEN` every 24h from `haxball.com/headlesstoken`.
+- On VPS set `PUPPETEER_HEADLESS=true` + correct `PUPPETEER_EXECUTABLE_PATH`.
+- DB (`data/haxball.db`): Records + `!kayit`/`!bagla` auth (requires Discord link).
+- Bot logic: `src/haxball/injected/squareDecision.js:73` (`squareIntent`) and `main.js:237` (`squaresAiTick` + per-court state).
+- Commands in `commands.js` + `main.js` (squares-only: !bigger/!ball).
+- After changes run `npm run lint` (`node -c`).
 
 ---
 
